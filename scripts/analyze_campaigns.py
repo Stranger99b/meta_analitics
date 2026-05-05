@@ -275,16 +275,24 @@ def _build_ai_summary(
         adset_map = {}
         for r in adset_rows:
             n = r.get("adset_name", "")
-            adset_map[n] = adset_map.get(n, 0) + _f(r.get("spend"))
-        for name, sp in sorted(adset_map.items(), key=lambda x: -x[1])[:8]:
-            lines.append(f"• {name}: расход {sp:.2f}")
+            camp = r.get("campaign_name", "")
+            if n not in adset_map:
+                adset_map[n] = {"spend": 0, "camp": camp}
+            adset_map[n]["spend"] += _f(r.get("spend"))
+        for name, v in sorted(adset_map.items(), key=lambda x: -x[1]["spend"])[:8]:
+            lines.append(f"• Адсет: {name} (кампания: {v['camp']}) | расход {v['spend']:.2f}")
 
     if ad_rows:
-        lines += ["", "=== ОБЪЯВЛЕНИЯ ВЧЕРА (по CTR) ==="]
-        for r in sorted(ad_rows, key=lambda x: _f(x.get("ctr")), reverse=True)[:10]:
+        lines += ["", "=== ОБЪЯВЛЕНИЯ ВЧЕРА (формат: Адсет → Крео) ==="]
+        lines.append("ВАЖНО: при анализе всегда указывай пару Адсет + Крео, не только одно из двух")
+        for r in sorted(ad_rows, key=lambda x: _f(x.get("ctr")), reverse=True):
+            adset = r.get("adset_name", "—")
+            ad = r.get("ad_name", "—")
+            dialogs = _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection")
             lines.append(
-                f"• {r.get('ad_name','')} | CTR {_f(r.get('ctr')):.2f}% | "
+                f"• Адсет: {adset} → Крео: {ad} | CTR {_f(r.get('ctr')):.2f}% | "
                 f"расход {_f(r.get('spend')):.2f} | {_i(r.get('impressions'))} показов"
+                + (f" | диалогов {dialogs}" if dialogs else "")
             )
 
     if alerts:

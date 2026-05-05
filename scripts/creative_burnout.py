@@ -56,9 +56,10 @@ def detect_burnout(ad_rows_yesterday, ad_rows_7d):
 
     results = []
     for r in ad_rows_yesterday:
-        aid  = r.get("ad_id") or r.get("ad_name")
-        name = r.get("ad_name", aid)
-        camp = r.get("campaign_name", "")
+        aid   = r.get("ad_id") or r.get("ad_name")
+        name  = r.get("ad_name", aid)
+        camp  = r.get("campaign_name", "")
+        adset = r.get("adset_name", "")
         ctr_now  = _f(r.get("ctr"))
         impr_now = _i(r.get("impressions"))
         freq_now = _f(r.get("frequency", 0))
@@ -101,6 +102,7 @@ def detect_burnout(ad_rows_yesterday, ad_rows_7d):
             "level": level,
             "severity": severity,
             "name": name,
+            "adset": adset,
             "camp": camp,
             "ctr_now": ctr_now,
             "ctr_7d": ctr_7d,
@@ -120,7 +122,10 @@ def format_burnout_block(burnout_results):
 
     lines = ["━━━━ ВЫГОРАНИЕ КРЕАТИВОВ ━━━━"]
     for b in burnout_results[:6]:  # max 6 entries to keep message size
-        lines.append(f"\n{b['level']}: *{b['name'][:50]}*")
+        lines.append(f"\n{b['level']}")
+        if b["adset"]:
+            lines.append(f"  📂 Адсет: *{b['adset'][:55]}*")
+        lines.append(f"  🎨 Крео: {b['name'][:55]}")
         lines.append(f"  🏷 {b['camp'][:45]}")
         for flag in b["flags"]:
             lines.append(f"  ⚠️ {flag}")
@@ -143,10 +148,15 @@ def burnout_ai_summary(burnout_results):
     """Returns text summary for Claude AI prompt."""
     if not burnout_results:
         return "Выгорания креативов не обнаружено."
-    lines = ["=== ВЫГОРАНИЕ КРЕАТИВОВ ==="]
+    lines = [
+        "=== ВЫГОРАНИЕ КРЕАТИВОВ ===",
+        "ВАЖНО: при рекомендациях всегда указывай пару Адсет + Крео",
+    ]
     for b in burnout_results:
+        adset_part = f"Адсет: {b['adset']} → " if b["adset"] else ""
         lines.append(
-            f"• [{b['level']}] {b['name']} | CTR вчера {b['ctr_now']:.2f}% vs 7д {b['ctr_7d']:.2f}% | "
+            f"• [{b['level']}] {adset_part}Крео: {b['name']} | "
+            f"CTR вчера {b['ctr_now']:.2f}% vs 7д {b['ctr_7d']:.2f}% | "
             f"частота {b['freq']:.1f} | расход {b['spend']:.2f} | диалогов {b['dialogs']}"
         )
     return "\n".join(lines)

@@ -31,8 +31,6 @@ def main():
 
         # --- Analyze ---
         report, summary = analyze()
-        if cache_warning:
-            report = cache_warning + report
 
         # --- Creative burnout ---
         burnout = detect_burnout(
