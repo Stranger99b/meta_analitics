@@ -15,6 +15,7 @@ from ai_audit import ai_audit
 from send_telegram import send_message
 from ig_followers import fetch_and_record, format_followers_block
 from creative_burnout import detect_burnout, format_burnout_block, burnout_ai_summary
+from crm_attribution import build_attribution
 
 
 def main():
@@ -40,9 +41,12 @@ def main():
         burnout_block = format_burnout_block(burnout)
         burnout_summary = burnout_ai_summary(burnout)
 
+        # --- CRM attribution ---
+        attribution_block, attribution_summary = build_attribution()
+
         # --- AI audit ---
         print("[run_daily] Requesting AI audit from Claude...")
-        ai_text = ai_audit(summary + "\n\n" + burnout_summary, mode="daily")
+        ai_text = ai_audit(summary + "\n\n" + burnout_summary + "\n\n" + attribution_summary, mode="daily")
 
         followers_block = format_followers_block(ig_snap, period="day")
         if followers_block:
@@ -61,6 +65,12 @@ def main():
             f.write(full_report)
 
         send_message(full_report)
+
+        # CRM attribution — отдельным сообщением (объёмный блок)
+        if attribution_block:
+            send_message(attribution_block)
+            print("[run_daily] CRM attribution sent.")
+
         print(f"[run_daily] Done. Report saved → reports/{date_str}.txt")
 
     except Exception:
