@@ -66,9 +66,9 @@ def main():
 
         send_message(full_report)
 
-        # CRM attribution — отдельным сообщением (объёмный блок)
+        # CRM attribution — отдельным сообщением (HTML-форматирование)
         if attribution_block:
-            send_message(attribution_block)
+            send_message(attribution_block, parse_mode="HTML")
             print("[run_daily] CRM attribution sent.")
 
         print(f"[run_daily] Done. Report saved → reports/{date_str}.txt")
