@@ -53,7 +53,7 @@ def main():
         prompt = f"{WEEKLY_PROMPT}\n\n=== ДАННЫЕ ===\n{summary}"
         result = subprocess.run(
             [claude_bin, "--print", "--dangerously-skip-permissions", "-p", prompt],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=600,
         )
         ai_text = result.stdout.strip() if result.returncode == 0 and result.stdout.strip() \
             else f"[AI аудит недоступен: {result.stderr[:200]}]"

@@ -104,14 +104,14 @@ def ai_audit(summary: str, mode: str = "daily") -> str:
             [CLAUDE_BIN, "--print", "--dangerously-skip-permissions", "-p", prompt],
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
         err = result.stderr.strip()[:300] if result.stderr else "нет вывода"
         return f"[AI аудит недоступен: {err}]"
     except subprocess.TimeoutExpired:
-        return "[AI аудит: таймаут 120с]"
+        return "[AI аудит: таймаут 300с]"
     except Exception as e:
         return f"[AI аудит: ошибка — {e}]"
 
