@@ -2,6 +2,7 @@
 
 import os
 import json
+import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -15,17 +16,32 @@ AD_ACCOUNT_ID = os.environ["META_AD_ACCOUNT_ID"]
 HISTORY_FILE = os.path.join(os.path.dirname(__file__), "..", "data", "followers_history.json")
 IG_ID_FILE   = os.path.join(os.path.dirname(__file__), "..", "data", "ig_account_id.txt")
 
+TIMEOUT = 60
+MAX_RETRIES = 3
+
+
+def _get(url, params, _retry=0):
+    try:
+        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        if _retry < MAX_RETRIES:
+            wait = 2 ** _retry * 5
+            print(f"[ig_followers] Timeout, retry {_retry + 1}/{MAX_RETRIES} in {wait}s... ({e})")
+            time.sleep(wait)
+            return _get(url, params, _retry + 1)
+        raise
+
 
 def _get_ig_account_id():
     if os.path.exists(IG_ID_FILE):
         return open(IG_ID_FILE).read().strip()
-    r = requests.get(
+    data = _get(
         f"{BASE_URL}/{AD_ACCOUNT_ID}/instagram_accounts",
-        params={"access_token": ACCESS_TOKEN},
-        timeout=15,
+        {"access_token": ACCESS_TOKEN},
     )
-    r.raise_for_status()
-    accounts = r.json().get("data", [])
+    accounts = data.get("data", [])
     if not accounts:
         return None
     ig_id = accounts[0]["id"]
@@ -53,16 +69,13 @@ def fetch_and_record():
     if not ig_id:
         return None
 
-    r = requests.get(
+    info = _get(
         f"{BASE_URL}/{ig_id}",
-        params={
+        {
             "fields": "name,username,followers_count,media_count",
             "access_token": ACCESS_TOKEN,
         },
-        timeout=15,
     )
-    r.raise_for_status()
-    info = r.json()
 
     today = datetime.now().strftime("%Y-%m-%d")
     followers = info.get("followers_count", 0)
