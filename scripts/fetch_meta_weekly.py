@@ -2,6 +2,7 @@
 
 import os
 import json
+import time
 import requests
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
@@ -27,11 +28,37 @@ AD_FIELDS = (
 )
 
 
-def _get(url, params):
+TIMEOUT = 60
+MAX_RETRIES = 3
+
+
+def _get(url, params, _retry=0):
     params = dict(params, access_token=ACCESS_TOKEN)
-    r = requests.get(url, params=params, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = requests.get(url, params=params, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        if _retry < MAX_RETRIES:
+            wait = 2 ** _retry * 5
+            print(f"[weekly] Timeout, retry {_retry + 1}/{MAX_RETRIES} in {wait}s... ({e})")
+            time.sleep(wait)
+            return _get(url, params, _retry + 1)
+        raise
+
+
+def _get_page(url, _retry=0):
+    try:
+        r = requests.get(url, timeout=TIMEOUT)
+        r.raise_for_status()
+        return r.json()
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+        if _retry < MAX_RETRIES:
+            wait = 2 ** _retry * 5
+            print(f"[weekly] Timeout on pagination, retry {_retry + 1}/{MAX_RETRIES} in {wait}s...")
+            time.sleep(wait)
+            return _get_page(url, _retry + 1)
+        raise
 
 
 def _get_all_pages(url, params):
@@ -39,7 +66,7 @@ def _get_all_pages(url, params):
     data = _get(url, params)
     results.extend(data.get("data", []))
     while "paging" in data and "next" in data.get("paging", {}):
-        data = requests.get(data["paging"]["next"], timeout=30).json()
+        data = _get_page(data["paging"]["next"])
         results.extend(data.get("data", []))
     return results
 
