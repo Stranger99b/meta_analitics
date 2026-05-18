@@ -49,6 +49,11 @@ def _get_action(actions, *atypes):
     return sum(_i(a.get("value", 0)) for a in actions if a.get("action_type") in atypes)
 
 
+def _is_dialog(name):
+    n = (name or "").lower()
+    return "диалог" in n or "dialog" in n
+
+
 def _sum_rows(rows):
     spend       = sum(_f(r.get("spend")) for r in rows)
     impressions = sum(_i(r.get("impressions")) for r in rows)
@@ -85,13 +90,28 @@ def _fmt_date(d):
     return f"{day}.{m}"
 
 
-def _health_icon(ctr, prev_ctr, dialogs_ok=True):
+def _health_icon_dialog(cpd_now, cpd_prev, dialogs_now, dialogs_prev):
     issues = 0
-    if prev_ctr > 0 and ctr / prev_ctr < 0.85:
-        issues += 2
-    if ctr < 0.5:
+    if cpd_now >= 3.0:
+        issues += 3
+    elif cpd_now >= 2.0:
         issues += 1
-    if not dialogs_ok:
+    if cpd_prev > 0 and cpd_now / cpd_prev > 1.2:
+        issues += 2
+    if dialogs_prev > 0 and dialogs_now > 0 and dialogs_now / dialogs_prev < 0.7:
+        issues += 2
+    if issues >= 3:
+        return "🔴"
+    if issues >= 1:
+        return "🟡"
+    return "🟢"
+
+
+def _health_icon_traffic(ctr_now, ctr_prev):
+    issues = 0
+    if ctr_prev > 0 and ctr_now / ctr_prev < 0.85:
+        issues += 2
+    if ctr_now < 0.5:
         issues += 1
     if issues >= 3:
         return "🔴"
@@ -116,8 +136,8 @@ def analyze_weekly(data_path=None):
     w1_label = f"{_fmt_date(w1['since'])}–{_fmt_date(w1['until'])}"
     w2_label = f"{_fmt_date(w2['since'])}–{_fmt_date(w2['until'])}"
 
-    w1c = data.get("w1_campaigns", [])
-    w2c = data.get("w2_campaigns", [])
+    w1c    = data.get("w1_campaigns", [])
+    w2c    = data.get("w2_campaigns", [])
     adsets = data.get("w1_adsets", [])
     ads    = data.get("w1_ads", [])
 
@@ -136,16 +156,18 @@ def analyze_weekly(data_path=None):
         "━━━━ ИТОГО ЗА НЕДЕЛЮ ━━━━",
         f"💰 Расход: *{_money(T1['spend'], cur)}*  (пред: {_money(T2['spend'], cur)}  {_delta(T1['spend'], T2['spend'])})",
         f"👁 Охват: {T1['reach']:,}  (пред: {T2['reach']:,}  {_delta(T1['reach'], T2['reach'])})",
-        f"🖱 Клики: {T1['clicks']:,}  (пред: {T2['clicks']:,}  {_delta(T1['clicks'], T2['clicks'])})",
+    ]
+    if T1["dialogs"] or T2["dialogs"]:
+        cpd_delta = _delta(T1['cpd'], T2['cpd'], invert=True) if T1['cpd'] and T2['cpd'] else ""
+        lines.append(
+            f"💬 Диалогов: *{T1['dialogs']}*  (пред: {T2['dialogs']}  {_delta(T1['dialogs'], T2['dialogs'])})"
+            + (f"  |  CPD *{_money(T1['cpd'], cur)}*  (пред: {_money(T2['cpd'], cur)}  {cpd_delta})" if T1['cpd'] else "")
+        )
+    lines += [
         f"📈 CTR: {_pct(T1['ctr'])}  (пред: {_pct(T2['ctr'])}  {_delta(T1['ctr'], T2['ctr'])})",
         f"💵 CPC: {_money(T1['cpc'], cur)}  (пред: {_money(T2['cpc'], cur)}  {_delta(T1['cpc'], T2['cpc'], invert=True)})",
         f"📣 CPM: {_money(T1['cpm'], cur)}  (пред: {_money(T2['cpm'], cur)}  {_delta(T1['cpm'], T2['cpm'], invert=True)})",
     ]
-    if T1["dialogs"] or T2["dialogs"]:
-        lines.append(
-            f"💬 Диалогов: *{T1['dialogs']}*  (пред: {T2['dialogs']}  {_delta(T1['dialogs'], T2['dialogs'])})"
-            + (f"  |  цена {_money(T1['cpd'], cur)} (пред: {_money(T2['cpd'], cur)}  {_delta(T1['cpd'], T2['cpd'], invert=True)})" if T1['cpd'] else "")
-        )
     eng_parts = []
     if T1["video_views"]: eng_parts.append(f"▶ {T1['video_views']:,} просмотров (пред: {T2['video_views']:,}  {_delta(T1['video_views'], T2['video_views'])})")
     if T1["saves"]:       eng_parts.append(f"🔖 {T1['saves']} сохр. (пред: {T2['saves']}  {_delta(T1['saves'], T2['saves'])})")
@@ -159,56 +181,139 @@ def analyze_weekly(data_path=None):
     alerts = []
 
     for cid, c in sorted_camps:
-        c2 = w2_camps.get(cid, {})
-        prev_ctr = c2.get("ctr", 0)
+        c2         = w2_camps.get(cid, {})
         prev_spend = c2.get("spend", 0)
-        icon = _health_icon(c["ctr"], prev_ctr)
+        is_dialog  = _is_dialog(c["name"])
 
-        line = (
-            f"\n{icon} *{c['name']}*\n"
-            f"  💰 {_money(c['spend'], cur)} {_delta(c['spend'], prev_spend)}"
-            f"  |  CTR {_pct(c['ctr'])} {_delta(c['ctr'], prev_ctr)}"
-            f"  |  CPC {_money(c['cpc'], cur)}\n"
-            f"  👁 {c['impressions']:,} показов  |  Клики: {c['clicks']:,}"
-        )
-        if c["dialogs"]:
+        if is_dialog:
+            prev_cpd     = c2.get("cpd", 0)
             prev_dialogs = c2.get("dialogs", 0)
-            line += f"\n  💬 {c['dialogs']} диалогов  {_delta(c['dialogs'], prev_dialogs)}  |  цена {_money(c['cpd'], cur)}/диалог"
-        if c2:
-            line += f"\n  ↔ Пред. нед.: расход {_money(prev_spend, cur)}, CTR {_pct(prev_ctr)}, диалогов {c2.get('dialogs',0)}"
-        if c["video_views"]:
-            line += f"\n  ▶ {c['video_views']:,} просм.  🔖 {c['saves']} сохр."
+            icon = _health_icon_dialog(c["cpd"], prev_cpd, c["dialogs"], prev_dialogs)
+
+            cpd_delta = _delta(c["cpd"], prev_cpd, invert=True) if prev_cpd and c["dialogs"] else ""
+            line = (
+                f"\n{icon} 💬 *{c['name']}*\n"
+                f"  💰 {_money(c['spend'], cur)} {_delta(c['spend'], prev_spend)}"
+                f"  |  💬 {c['dialogs']} диалогов {_delta(c['dialogs'], prev_dialogs)}"
+            )
+            if c["dialogs"]:
+                line += f"  |  CPD *{_money(c['cpd'], cur)}* {cpd_delta}"
+            else:
+                line += "  |  ⚠️ 0 диалогов"
+            line += f"\n  👁 {c['impressions']:,} показов  |  📈 CTR {_pct(c['ctr'])}"
+            if c2:
+                prev_cpd_str = f", CPD {_money(prev_cpd, cur)}" if prev_cpd else ""
+                line += f"\n  ↔ Пред. нед.: расход {_money(prev_spend, cur)}, {prev_dialogs} диалогов{prev_cpd_str}"
+
+            # Alerts for dialog campaigns
+            if c["dialogs"] == 0 and c["spend"] > 50:
+                alerts.append(f"🚨 0 диалогов при расходе {_money(c['spend'], cur)}: {c['name'][:50]}")
+            if c["dialogs"] > 0 and c["cpd"] >= 3.0:
+                alerts.append(f"💸 CPD {_money(c['cpd'], cur)} выше нормы $3: {c['name'][:50]}")
+            elif c["dialogs"] > 0 and prev_cpd > 0 and c["cpd"] / prev_cpd > 1.3:
+                alerts.append(f"📈 CPD вырос {_delta(c['cpd'], prev_cpd)}: {c['name'][:50]}")
+            if prev_dialogs > 0 and c["dialogs"] > 0 and c["dialogs"] / prev_dialogs < 0.7:
+                alerts.append(f"💬 Диалогов стало меньше {_delta(c['dialogs'], prev_dialogs)}: {c['name'][:50]}")
+
+        else:
+            prev_ctr = c2.get("ctr", 0)
+            icon = _health_icon_traffic(c["ctr"], prev_ctr)
+
+            line = (
+                f"\n{icon} 👁 *{c['name']}*\n"
+                f"  💰 {_money(c['spend'], cur)} {_delta(c['spend'], prev_spend)}"
+                f"  |  CTR {_pct(c['ctr'])} {_delta(c['ctr'], prev_ctr)}"
+                f"  |  CPC {_money(c['cpc'], cur)}\n"
+                f"  👁 {c['impressions']:,} показов  |  Клики: {c['clicks']:,}"
+            )
+            if c2:
+                line += f"\n  ↔ Пред. нед.: расход {_money(prev_spend, cur)}, CTR {_pct(prev_ctr)}"
+            if c["video_views"]:
+                line += f"\n  ▶ {c['video_views']:,} просм."
+            if c["saves"]:
+                line += f"  🔖 {c['saves']} сохр."
+
+            # Alerts for traffic campaigns
+            if prev_ctr > 0 and c["ctr"] / prev_ctr < 0.85:
+                alerts.append(f"⚡ CTR упал {_delta(c['ctr'], prev_ctr)}: {c['name'][:50]}")
+            if c["ctr"] < 0.5 and c["impressions"] > 3000:
+                alerts.append(f"📉 Низкий CTR {_pct(c['ctr'])}: {c['name'][:50]}")
+
         lines.append(line)
 
-        if prev_ctr > 0 and c["ctr"] / prev_ctr < 0.85:
-            alerts.append(f"⚡ CTR упал {_delta(c['ctr'], prev_ctr)}: {c['name'][:50]}")
-        prev_dialogs = c2.get("dialogs", 0)
-        if prev_dialogs > 0 and c["dialogs"] / prev_dialogs < 0.7:
-            alerts.append(f"💬 Диалогов стало меньше {_delta(c['dialogs'], prev_dialogs)}: {c['name'][:50]}")
-
-    # ── Top adsets ───────────────────────────────────────────
+    # ── Adsets ───────────────────────────────────────────────
     if adsets:
         lines += ["", "━━━━ АДСЕТЫ НЕДЕЛИ (топ-6 по расходу) ━━━━"]
         adset_map = {}
         for r in adsets:
             aid = r.get("adset_id", r.get("adset_name"))
-            adset_map.setdefault(aid, {"name": r.get("adset_name", aid), "rows": []})["rows"].append(r)
-        adset_totals = {aid: {"name": v["name"], **_sum_rows(v["rows"])} for aid, v in adset_map.items()}
+            camp = r.get("campaign_name", "")
+            adset_map.setdefault(aid, {"name": r.get("adset_name", aid), "camp": camp, "rows": []})["rows"].append(r)
+        adset_totals = {
+            aid: {"name": v["name"], "camp": v["camp"], **_sum_rows(v["rows"])}
+            for aid, v in adset_map.items()
+        }
         for _, a in sorted(adset_totals.items(), key=lambda x: x[1]["spend"], reverse=True)[:6]:
-            lines.append(f"  • {a['name'][:55]}  {_money(a['spend'], cur)}  CTR {_pct(a['ctr'])}")
+            is_d = _is_dialog(a["camp"])
+            if is_d and a["dialogs"]:
+                metric = f"CPD {_money(a['cpd'])}  💬{a['dialogs']}"
+            elif is_d:
+                metric = "💬 0 диал."
+            else:
+                metric = f"CTR {_pct(a['ctr'])}"
+                if a["saves"]:
+                    metric += f"  🔖{a['saves']}"
+            lines.append(f"  • {a['name'][:52]}  {_money(a['spend'], cur)}  {metric}")
 
-    # ── Top/bottom ads ───────────────────────────────────────
+    # ── Ads split by campaign type ───────────────────────────
     if ads:
-        filtered = [r for r in ads if _i(r.get("impressions", 0)) > 500]
-        if filtered:
-            top = sorted(filtered, key=lambda r: _f(r.get("ctr")), reverse=True)[:4]
-            bot = sorted(filtered, key=lambda r: _f(r.get("ctr")))[:3]
-            lines += ["", "━━━━ ЛУЧШИЕ ОБЪЯВЛЕНИЯ НЕДЕЛИ ━━━━"]
-            for r in top:
-                lines.append(f"  🟢 {r.get('ad_name','')[:50]}  CTR {_pct(_f(r.get('ctr')))}  расход {_money(_f(r.get('spend')), cur)}")
-            lines += ["", "━━━━ АУТСАЙДЕРЫ НЕДЕЛИ ━━━━"]
-            for r in bot:
-                lines.append(f"  🔴 {r.get('ad_name','')[:50]}  CTR {_pct(_f(r.get('ctr')))}  расход {_money(_f(r.get('spend')), cur)}")
+        dialog_ads  = [r for r in ads if _is_dialog(r.get("campaign_name", ""))]
+        traffic_ads = [r for r in ads if not _is_dialog(r.get("campaign_name", ""))]
+
+        # Dialog ads: rank by CPD
+        if dialog_ads:
+            with_dialogs = [
+                r for r in dialog_ads
+                if _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection") >= 2
+                and _f(r.get("spend")) >= 5
+            ]
+            if with_dialogs:
+                def _cpd(r):
+                    d = _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection")
+                    s = _f(r.get("spend"))
+                    return s / d if d else float("inf")
+
+                best  = sorted(with_dialogs, key=_cpd)[:3]
+                worst = sorted(with_dialogs, key=_cpd, reverse=True)[:3]
+
+                lines += ["", "━━━━ 💬 ДИАЛОГОВЫЕ ОБЪЯВЛЕНИЯ (CPD) ━━━━"]
+                lines.append("  Лучшие (дешевле диалог):")
+                for r in best:
+                    d = _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection")
+                    s = _f(r.get("spend"))
+                    lines.append(f"  🟢 {r.get('ad_name','')[:45]}  CPD {_money(s/d)}  💬{d}")
+
+                if worst and worst[0].get("ad_name") != best[0].get("ad_name"):
+                    lines.append("  Дорогие:")
+                    for r in worst:
+                        d = _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection")
+                        s = _f(r.get("spend"))
+                        lines.append(f"  🔴 {r.get('ad_name','')[:45]}  CPD {_money(s/d)}  💬{d}")
+
+        # Traffic ads: rank by CTR
+        if traffic_ads:
+            filtered = [r for r in traffic_ads if _i(r.get("impressions", 0)) > 500]
+            if filtered:
+                top = sorted(filtered, key=lambda r: _f(r.get("ctr")), reverse=True)[:4]
+                bot = sorted(filtered, key=lambda r: _f(r.get("ctr")))[:3]
+                lines += ["", "━━━━ 👁 ТРАФИКОВЫЕ ОБЪЯВЛЕНИЯ (CTR) ━━━━"]
+                lines.append("  Лучшие:")
+                for r in top:
+                    lines.append(f"  🟢 {r.get('ad_name','')[:45]}  CTR {_pct(_f(r.get('ctr')))}  расход {_money(_f(r.get('spend')), cur)}")
+                if bot:
+                    lines.append("  Слабые:")
+                    for r in bot:
+                        lines.append(f"  🔴 {r.get('ad_name','')[:45]}  CTR {_pct(_f(r.get('ctr')))}  расход {_money(_f(r.get('spend')), cur)}")
 
     # ── Trend summary ────────────────────────────────────────
     lines += ["", "━━━━ ТЕНДЕНЦИЯ НЕДЕЛИ ━━━━"]
@@ -220,14 +325,18 @@ def analyze_weekly(data_path=None):
             return arrow + (" ⚠️" if good_dir == "up" else " ✅")
         return (arrow or "—") + " —"
 
-    lines += [
-        f"  Расход:    {_label(_delta(T1['spend'],       T2['spend']),       'neutral')}",
-        f"  CTR:       {_label(_delta(T1['ctr'],         T2['ctr']),         'up')}",
-        f"  CPC:       {_label(_delta(T1['cpc'],         T2['cpc'], True),   'up')}",
-        f"  Клики:     {_label(_delta(T1['clicks'],      T2['clicks']),      'up')}",
-        f"  Диалоги:   {_label(_delta(T1['dialogs'],     T2['dialogs']),     'up')}",
-        f"  Сохранения:{_label(_delta(T1['saves'],       T2['saves']),       'up')}",
+    trend_lines = [
+        f"  Расход:    {_label(_delta(T1['spend'],   T2['spend']),             'neutral')}",
+        f"  Диалоги:   {_label(_delta(T1['dialogs'], T2['dialogs']),           'up')}",
     ]
+    if T1['cpd'] and T2['cpd']:
+        trend_lines.append(f"  CPD:       {_label(_delta(T1['cpd'], T2['cpd'], True),   'up')}")
+    trend_lines += [
+        f"  CTR:       {_label(_delta(T1['ctr'],     T2['ctr']),               'up')}",
+        f"  CPC:       {_label(_delta(T1['cpc'],     T2['cpc'], True),         'up')}",
+        f"  Сохранения:{_label(_delta(T1['saves'],   T2['saves']),             'up')}",
+    ]
+    lines += trend_lines
 
     # ── Alerts ───────────────────────────────────────────────
     if alerts:
@@ -235,7 +344,6 @@ def analyze_weekly(data_path=None):
 
     report = "\n".join(lines)
 
-    # Build AI summary
     summary = _build_weekly_ai_summary(
         acc, cur, w1_label, w2_label, T1, T2,
         sorted_camps, w1_camps, w2_camps, adsets, ads, alerts,
@@ -251,41 +359,70 @@ def _build_weekly_ai_summary(
     lines = [
         f"Аккаунт: {acc} | Валюта: {cur}",
         f"Период: неделя {w1_label} vs предыдущая {w2_label}",
+        "Бизнес: туристическая компания, реклама в Instagram/Facebook",
+        "Главная конверсия: диалог в Direct (onsite_conversion.total_messaging_connection)",
+        "Стратегия: 60% бюджета — диалоговые кампании (ключевая метрика CPD, норма ≤$3), "
+        "40% — трафик в профиль (ключевая метрика CTR/охват)",
         "",
         "=== ИТОГО АККАУНТА ===",
-        f"Нед.1: расход {T1['spend']:.2f}, показы {T1['impressions']}, клики {T1['clicks']}, CTR {T1['ctr']:.2f}%, CPC {T1['cpc']:.2f}, CPM {T1['cpm']:.2f}, охват {T1['reach']}",
-        f"Нед.2: расход {T2['spend']:.2f}, показы {T2['impressions']}, клики {T2['clicks']}, CTR {T2['ctr']:.2f}%, CPC {T2['cpc']:.2f}, CPM {T2['cpm']:.2f}, охват {T2['reach']}",
+        f"Нед.1: расход {T1['spend']:.2f}, показы {T1['impressions']}, CTR {T1['ctr']:.2f}%, CPM {T1['cpm']:.2f}, охват {T1['reach']}",
+        f"Нед.2: расход {T2['spend']:.2f}, показы {T2['impressions']}, CTR {T2['ctr']:.2f}%, CPM {T2['cpm']:.2f}, охват {T2['reach']}",
     ]
     if T1["dialogs"] or T2["dialogs"]:
         lines.append(
-            f"Диалоги: нед.1={T1['dialogs']} (цена {T1['cpd']:.2f})  |  нед.2={T2['dialogs']} (цена {T2['cpd']:.2f})"
+            f"Диалоги: нед.1={T1['dialogs']} (CPD {T1['cpd']:.2f})  |  нед.2={T2['dialogs']} (CPD {T2['cpd']:.2f})"
         )
 
     lines += ["", "=== КАМПАНИИ (нед.1 vs нед.2) ==="]
     for cid, c in sorted_camps:
         c2 = w2_camps.get(cid, {})
-        lines.append(
-            f"• {c['name']}: расход {c['spend']:.2f} (пред {c2.get('spend',0):.2f}), "
-            f"CTR {c['ctr']:.2f}% (пред {c2.get('ctr',0):.2f}%), "
-            f"CPC {c['cpc']:.2f}, клики {c['clicks']}, диалогов {c['dialogs']} (пред {c2.get('dialogs',0)}), "
-            f"просм. {c['video_views']:,}, сохр. {c['saves']}"
-        )
+        is_dialog = _is_dialog(c["name"])
+        if is_dialog:
+            lines.append(
+                f"• [💬 ДИАЛОГ] {c['name']}: расход {c['spend']:.2f} (пред {c2.get('spend',0):.2f}), "
+                f"диалогов {c['dialogs']} (пред {c2.get('dialogs',0)}), "
+                f"CPD {c['cpd']:.2f} (пред {c2.get('cpd',0):.2f}), "
+                f"CTR {c['ctr']:.2f}%, показы {c['impressions']}"
+            )
+        else:
+            lines.append(
+                f"• [👁 ТРАФИК] {c['name']}: расход {c['spend']:.2f} (пред {c2.get('spend',0):.2f}), "
+                f"CTR {c['ctr']:.2f}% (пред {c2.get('ctr',0):.2f}%), "
+                f"CPC {c['cpc']:.2f}, клики {c['clicks']}, "
+                f"просм. {c['video_views']:,}, сохр. {c['saves']}"
+            )
 
     if adsets:
         lines += ["", "=== ТОП АДСЕТЫ (нед.1) ==="]
         adset_map = {}
         for r in adsets:
-            n = r.get("adset_name", "")
-            adset_map[n] = adset_map.get(n, 0) + _f(r.get("spend"))
-        for name, sp in sorted(adset_map.items(), key=lambda x: -x[1])[:8]:
-            lines.append(f"• {name}: {sp:.2f}")
+            n    = r.get("adset_name", "")
+            camp = r.get("campaign_name", "")
+            adset_map.setdefault(n, {"spend": 0, "camp": camp, "rows": []})
+            adset_map[n]["spend"] += _f(r.get("spend"))
+            adset_map[n]["rows"].append(r)
+        for name, v in sorted(adset_map.items(), key=lambda x: -x[1]["spend"])[:8]:
+            t = _sum_rows(v["rows"])
+            is_d = _is_dialog(v["camp"])
+            if is_d:
+                lines.append(f"• {name} | расход {v['spend']:.2f} | диалогов {t['dialogs']} | CPD {t['cpd']:.2f}")
+            else:
+                lines.append(f"• {name} | расход {v['spend']:.2f} | CTR {t['ctr']:.2f}% | сохр. {t['saves']}")
 
     if ads:
-        lines += ["", "=== ОБЪЯВЛЕНИЯ (нед.1, топ по CTR) ==="]
-        for r in sorted(ads, key=lambda x: _f(x.get("ctr")), reverse=True)[:8]:
+        lines += ["", "=== ОБЪЯВЛЕНИЯ (нед.1) ==="]
+        for r in sorted(ads, key=lambda x: _f(x.get("spend")), reverse=True)[:10]:
+            is_d    = _is_dialog(r.get("campaign_name", ""))
+            dialogs = _get_action(r.get("actions", []), "onsite_conversion.total_messaging_connection")
+            spend   = _f(r.get("spend"))
+            cpd     = spend / dialogs if dialogs else None
+            if is_d:
+                metric = f"диалогов {dialogs}, CPD {cpd:.2f}" if cpd else f"диалогов {dialogs}"
+            else:
+                metric = f"CTR {_f(r.get('ctr')):.2f}%"
             lines.append(
-                f"• {r.get('ad_name','')} | CTR {_f(r.get('ctr')):.2f}% | "
-                f"расход {_f(r.get('spend')):.2f} | {_i(r.get('impressions'))} показов"
+                f"• {'💬' if is_d else '👁'} {r.get('ad_name','')} | "
+                f"расход {spend:.2f} | {metric} | {_i(r.get('impressions'))} показов"
             )
 
     if alerts:

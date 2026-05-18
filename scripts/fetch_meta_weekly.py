@@ -24,7 +24,7 @@ ADSET_FIELDS = (
 )
 AD_FIELDS = (
     "ad_id,ad_name,adset_name,campaign_name,"
-    "spend,impressions,clicks,ctr,cpc"
+    "spend,impressions,clicks,ctr,cpc,actions"
 )
 
 
