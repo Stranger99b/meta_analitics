@@ -11,18 +11,49 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-MAX_MSG_LEN = 4096
+MAX_MSG_LEN = 4000  # under Telegram's 4096 hard limit, leaves headroom
 
 
-def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str = "Markdown"):
-    """Send text, splitting into chunks if longer than 4096 chars."""
-    chunks = [text[i:i + MAX_MSG_LEN] for i in range(0, len(text), MAX_MSG_LEN)]
+def _split_message(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
+    """Split on line boundaries so chunks stay under the limit.
+
+    Splitting by raw text[i:i+4096] can cut a Markdown entity in half and make
+    Telegram reject the whole message with 400 "can't parse entities". Cutting on
+    line boundaries keeps each chunk self-contained.
+    """
+    chunks: list[str] = []
+    cur = ""
+    for line in text.split("\n"):
+        # A single line longer than the limit is hard-split as a fallback.
+        while len(line) > limit:
+            if cur:
+                chunks.append(cur)
+                cur = ""
+            chunks.append(line[:limit])
+            line = line[limit:]
+        if len(cur) + len(line) + 1 > limit:
+            if cur:
+                chunks.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str | None = None):
+    """Send text, splitting into chunks on line boundaries if it exceeds the limit.
+
+    parse_mode defaults to None (plain text) so report markup can never trigger a
+    400 "can't parse entities" error.
+    """
+    chunks = _split_message(text)
     for chunk in chunks:
-        r = requests.post(
-            f"{API_URL}/sendMessage",
-            json={"chat_id": chat_id, "text": chunk, "parse_mode": parse_mode},
-            timeout=30,
-        )
+        payload = {"chat_id": chat_id, "text": chunk}
+        if parse_mode:
+            payload["parse_mode"] = parse_mode
+        r = requests.post(f"{API_URL}/sendMessage", json=payload, timeout=30)
         r.raise_for_status()
     print(f"[telegram] Sent {len(chunks)} message(s)")
 
