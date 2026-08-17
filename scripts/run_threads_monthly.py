@@ -8,6 +8,7 @@ Cron: 1-е число месяца (отчёт за предыдущий мес�
 """
 import os
 import sys
+import time
 import shutil
 import subprocess
 import traceback
@@ -37,28 +38,50 @@ AI_INSTRUCTION = (
 )
 
 
-def qwen_review(summary: str, attempts: int = 2) -> str:
-    """AI-оценка SMM через Qwen. Ретрай при пустом ответе (важный блок отчёта)."""
+def _looks_complete(text: str) -> bool:
+    """Ответ считаем полным, если дошёл до секции рекомендаций и не оборван на слове."""
+    if not text:
+        return False
+    has_recs = "РЕКОМЕНДАЦ" in text.upper() or "4)" in text
+    # оборван на полуслове (нет финальной пунктуации в конце) — признак обрезки
+    ends_ok = text.rstrip()[-1:] in ".!?»)0123456789"
+    return has_recs and ends_ok
+
+
+def qwen_review(summary: str, attempts: int = 4) -> str:
+    """AI-оценка SMM через Qwen. Ретрай при пустом ИЛИ оборванном ответе.
+
+    Возвращает лучший из полученных ответов (полный — приоритетно; если полного
+    не вышло за все попытки — самый длинный, чтобы не терять оценку целиком).
+    """
     qwen = shutil.which("qwen-ask") or "/home/user/.local/bin/qwen-ask"
     if not os.path.exists(qwen):
         print("[run_threads_monthly] qwen-ask не найден — без AI-блока")
         return ""
+    best = ""
     for i in range(1, attempts + 1):
         try:
             r = subprocess.run(
-                [qwen, "--role", "reason", AI_INSTRUCTION],
+                [qwen, "--role", "long", "--max-tokens", "3000", AI_INSTRUCTION],
                 input=summary, capture_output=True, text=True, timeout=240)
             if r.returncode == 3 or "QWEN_QUOTA_EXCEEDED" in r.stderr:
                 print("[run_threads_monthly] Qwen упёрся в лимит — без AI-блока")
-                return ""
+                return best
             out = r.stdout.strip()
-            if out:
+            if len(out) > len(best):
+                best = out
+            if _looks_complete(out):
                 print(f"[run_threads_monthly] AI-оценка получена от Qwen (попытка {i})")
                 return out
-            print(f"[run_threads_monthly] Qwen вернул пусто (попытка {i}/{attempts})")
+            print(f"[run_threads_monthly] Ответ Qwen оборван/пуст (попытка {i}/{attempts}), "
+                  f"ретрай…")
         except Exception as e:  # noqa: BLE001
             print(f"[run_threads_monthly] Qwen ошибка (попытка {i}): {e}")
-    return ""
+        if i < attempts:
+            time.sleep(4)
+    if best:
+        print("[run_threads_monthly] Полного ответа не вышло — беру самый длинный")
+    return best
 
 
 def main():

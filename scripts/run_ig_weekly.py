@@ -36,7 +36,7 @@ def qwen_commentary(summary: str) -> str:
         return ""
     try:
         r = subprocess.run(
-            [qwen, "--role", "reason", AI_INSTRUCTION],
+            [qwen, "--role", "long", AI_INSTRUCTION],
             input=summary, capture_output=True, text=True, timeout=200)
         if r.returncode == 3 or "QWEN_QUOTA_EXCEEDED" in r.stderr:
             print("[run_ig_weekly] Qwen упёрся в лимит — без AI-вывода")
