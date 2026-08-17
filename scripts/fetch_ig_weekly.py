@@ -103,6 +103,13 @@ def fetch_and_save():
         "content": _content_since(w_start),
     }
 
+    # Сторис за неделю из накопленной базы (ленивый импорт против цикла).
+    # Верхняя граница today+1, чтобы включить сегодняшние сторис (как и контент).
+    import ig_content_compare as icc
+    data["stories"] = icc.stories_in_range(w_start, today + datetime.timedelta(days=1))
+    earliest = icc.stories_since_earliest()
+    data["stories_earliest"] = str(earliest) if earliest else None
+
     os.makedirs(os.path.join(DATA_DIR, "archive"), exist_ok=True)
     with open(os.path.join(DATA_DIR, "latest_ig_weekly.json"), "w",
               encoding="utf-8") as f:

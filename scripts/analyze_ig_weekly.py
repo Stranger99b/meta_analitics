@@ -90,6 +90,18 @@ def build_digest(data) -> str:
         L.append("━━━ КОНТЕНТ НЕДЕЛИ ━━━")
         L.append("За неделю новых публикаций с инсайтами не найдено.")
 
+    # ── Сторис + сравнение типов ──
+    import ig_content_compare as icc
+    stories = data.get("stories", [])
+    note = ""
+    if data.get("stories_earliest"):
+        note = f"(данные сторис копятся с {data['stories_earliest']})"
+    L.append("")
+    L.append(icc.render_stories(stories, note))
+    L.append("")
+    cmp = icc.compare(data.get("content", []), stories)
+    L.append(icc.render_compare(cmp))
+
     return "\n".join(L)
 
 
@@ -108,4 +120,19 @@ def build_ai_summary(data) -> str:
         cap = (c.get("caption") or "").replace("\n", " ").strip()[:60]
         parts.append(f"- {_content_label(c)} просмотры={c['insights']['views']} "
                      f"лайки={c['insights'].get('likes')} «{cap}»")
+
+    # сторис + сравнение типов контента (для советов по миксу)
+    import ig_content_compare as icc
+    stories = data.get("stories", [])
+    cmp = icc.compare(data.get("content", []), stories)
+    parts.append("Сравнение типов (кол-во / ср.просмотры):")
+    for t in ("REELS", "POSTS", "STORIES"):
+        a = cmp.get(t, {})
+        parts.append(f"- {t}: {a.get('count', 0)} шт, ср.просмотры {a.get('views_avg', 0)}")
+    if stories:
+        sv = sum((s.get("insights", {}).get("views") or 0) for s in stories)
+        sf = sum((s.get("insights", {}).get("follows") or 0) for s in stories)
+        pv = sum((s.get("insights", {}).get("profile_visits") or 0) for s in stories)
+        parts.append(f"Сторис за период: {len(stories)} шт, просмотры={sv}, "
+                     f"визиты профиля={pv}, подписки={sf}.")
     return "\n".join(parts)
