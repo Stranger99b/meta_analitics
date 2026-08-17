@@ -42,17 +42,21 @@ def _split_message(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
     return chunks
 
 
-def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str | None = None):
+def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str | None = None,
+                 message_thread_id: int | str | None = None):
     """Send text, splitting into chunks on line boundaries if it exceeds the limit.
 
     parse_mode defaults to None (plain text) so report markup can never trigger a
-    400 "can't parse entities" error.
+    400 "can't parse entities" error. message_thread_id targets a forum topic in a
+    supergroup (None = обычный чат / General).
     """
     chunks = _split_message(text)
     for chunk in chunks:
         payload = {"chat_id": chat_id, "text": chunk}
         if parse_mode:
             payload["parse_mode"] = parse_mode
+        if message_thread_id:
+            payload["message_thread_id"] = message_thread_id
         r = requests.post(f"{API_URL}/sendMessage", json=payload, timeout=30)
         r.raise_for_status()
     print(f"[telegram] Sent {len(chunks)} message(s)")

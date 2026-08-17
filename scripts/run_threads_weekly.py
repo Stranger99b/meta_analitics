@@ -64,7 +64,15 @@ def main():
                   encoding="utf-8") as f:
             f.write(report)
 
-        send_message(report)
+        # Threads-дайджест идёт в группу Go_контент, тему «Отчет» (не в личный чат)
+        chat_id = os.environ.get("THREADS_TG_CHAT_ID")
+        thread_id = os.environ.get("THREADS_TG_THREAD_ID")
+        send_kwargs = {}
+        if chat_id:
+            send_kwargs["chat_id"] = chat_id
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+        send_message(report, **send_kwargs)
         print(f"[run_threads_weekly] Готово → reports/threads_weekly_{date_str}.txt")
     except Exception:
         err = traceback.format_exc()
