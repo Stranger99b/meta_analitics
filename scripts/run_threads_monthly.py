@@ -30,9 +30,8 @@ AI_INSTRUCTION = (
     "1) ИТОГ МЕСЯЦА — 2-3 предложения: динамика охвата/вовлечённости и подписчиков к "
     "прошлому месяцу.\n"
     "2) ЧТО СРАБОТАЛО / ЧТО НЕТ — какие темы и форматы зашли, что провалилось (с цифрами).\n"
-    "3) ОЦЕНКА SMM-СПЕЦИАЛИСТА — балл от 1 до 10 с обоснованием: учитывай регулярность "
-    "постинга, рост показателей, наличие залетевших постов, работу с вовлечённостью. Будь "
-    "честным, но конструктивным.\n"
+    "3) ОЦЕНКА SMM — поясни УЖЕ РАССЧИТАННЫЙ балл (дан на входе): за счёт каких критериев "
+    "он такой, что вытянуло, что просело. НЕ меняй сам балл, только объясни.\n"
     "4) РЕКОМЕНДАЦИИ НА СЛЕДУЮЩИЙ МЕСЯЦ — 3-4 конкретных действия.\n"
     "Опирайся на реальные цифры и примеры постов, без общих фраз."
 )
@@ -89,12 +88,14 @@ def main():
     print(f"[run_threads_monthly] Старт месячного отчёта Threads (месяц={target or 'предыдущий'})…")
     try:
         import report_pdf as rpdf
+        import smm_score
         from send_telegram import send_bytes
 
         data = fetch_and_save(target)
-        ai_text = qwen_review(build_ai_summary(data))
+        score = smm_score.compute_threads(data)
+        ai_text = qwen_review(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
 
-        pdf = rpdf.threads_monthly_pdf(data, ai_text)
+        pdf = rpdf.threads_monthly_pdf(data, ai_text, score=score)
         mon = data["month"]
         tag = f"{mon['year']}-{mon['month']:02d}"
         fname = f"№{mon['month']:02d}_{mon['year']}_{mon['name'].capitalize()}_Threads_месячный.pdf"

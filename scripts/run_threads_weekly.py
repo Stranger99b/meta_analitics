@@ -19,10 +19,11 @@ from analyze_threads_weekly import build_digest, build_ai_summary
 from send_telegram import send_message
 
 AI_INSTRUCTION = (
-    "Ты — SMM-аналитик туристической компании в Threads (@gotrips_by). На входе — "
-    "недельные метрики Threads и топ постов. Дай КРАТКИЙ вывод на русском (3-5 "
-    "предложений, без markdown-заголовков): динамика просмотров/вовлечённости к "
-    "прошлой неделе, какие темы/форматы зашли, 1-2 конкретных совета. Без воды."
+    "Ты — руководитель маркетинга, оцениваешь SMM в Threads (@gotrips_by) за неделю. "
+    "На входе — УЖЕ РАССЧИТАННЫЙ балл SMM по рубрике с разбором + недельные метрики и "
+    "топ постов. Ответ на русском, БЕЗ markdown-заголовков, 4-6 предложений: 1) поясни "
+    "оценку (что вытянуло, что просело); 2) какие темы/форматы зашли; 3) 1-2 совета. "
+    "НЕ меняй балл — только объясняй. Без воды."
 )
 
 
@@ -52,12 +53,14 @@ def main():
     try:
         import datetime as _dt
         import report_pdf as rpdf
+        import smm_score
         from send_telegram import send_bytes
 
         data = fetch_and_save()
-        ai_text = qwen_commentary(build_ai_summary(data))
+        score = smm_score.compute_threads(data)
+        ai_text = qwen_commentary(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
 
-        pdf = rpdf.threads_weekly_pdf(data, ai_text)
+        pdf = rpdf.threads_weekly_pdf(data, ai_text, score=score)
         b = _dt.date.fromisoformat(data["week"]["until"])
         y, w, _ = b.isocalendar()
         fname = f"№{w}_{y}_Threads_недельный_дайджест.pdf"

@@ -20,11 +20,12 @@ from analyze_ig_weekly import build_digest, build_ai_summary
 from send_telegram import send_message
 
 AI_INSTRUCTION = (
-    "Ты — SMM-аналитик туристической компании (Instagram @gotrips_by). "
-    "На входе — недельные метрики инстаграма и топ контента. Дай КРАТКИЙ вывод "
-    "на русском (3-5 предложений, без markdown-заголовков): что с охватом и "
-    "вовлечённостью относительно прошлой недели, какой формат/тема зашли лучше, "
-    "1-2 конкретных совета на следующую неделю. Без воды и общих фраз."
+    "Ты — руководитель маркетинга, оцениваешь SMM в Instagram (@gotrips_by) за неделю. "
+    "На входе — УЖЕ РАССЧИТАННЫЙ балл SMM по рубрике с разбором по критериям + недельные "
+    "метрики и топ контента. Ответ на русском, БЕЗ markdown-заголовков, 4-6 предложений: "
+    "1) поясни оценку — за счёт каких критериев балл такой (что вытянуло, что просело); "
+    "2) какой формат/тема зашли лучше; 3) 1-2 конкретных совета на следующую неделю. "
+    "НЕ меняй балл — только объясняй. Без воды."
 )
 
 
@@ -56,15 +57,17 @@ def main():
         import datetime as _dt
         import report_pdf as rpdf
         import stories_sheet
+        import smm_score
         from send_telegram import send_bytes
 
         data = fetch_and_save()
-        ai_text = qwen_commentary(build_ai_summary(data))
+        score = smm_score.compute_ig(data)
+        ai_text = qwen_commentary(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
 
         # вся статистика сторис → Google-таблица (ссылка попадёт в PDF)
         sheet_url = stories_sheet.upload()
 
-        pdf = rpdf.ig_weekly_pdf(data, ai_text, sheet_url=sheet_url)
+        pdf = rpdf.ig_weekly_pdf(data, ai_text, sheet_url=sheet_url, score=score)
         b = _dt.date.fromisoformat(data["week"]["until"])
         y, w, _ = b.isocalendar()
         fname = f"№{w}_{y}_IG_недельный_дайджест.pdf"

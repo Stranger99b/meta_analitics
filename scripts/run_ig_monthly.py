@@ -31,8 +31,8 @@ AI_INSTRUCTION = (
     "3) КОНТЕНТ-МИКС — на основе сравнения типов: какого контента и сколько нужно "
     "публиковать (рилс vs посты vs сторис), в какие дни/как часто, чтобы расти эффективнее. "
     "Опирайся на ср.просмотры и вклад сторис в визиты профиля/подписки.\n"
-    "4) ОЦЕНКА SMM-СПЕЦИАЛИСТА — балл 1-10 с обоснованием (регулярность, рост, залёты, "
-    "работа с вовлечённостью и сторис).\n"
+    "4) ОЦЕНКА SMM — поясни УЖЕ РАССЧИТАННЫЙ балл (дан на входе): за счёт каких критериев "
+    "он такой, что вытянуло, что просело. НЕ меняй сам балл, только объясни.\n"
     "5) РЕКОМЕНДАЦИИ НА СЛЕДУЮЩИЙ МЕСЯЦ — 3-5 конкретных действий.\n"
     "Опирайся на реальные цифры, без общих фраз."
 )
@@ -82,13 +82,15 @@ def main():
     try:
         import report_pdf as rpdf
         import stories_sheet
+        import smm_score
         from send_telegram import send_bytes
 
         data = fetch_and_save(target)
-        ai_text = qwen_review(build_ai_summary(data))
+        score = smm_score.compute_ig(data)
+        ai_text = qwen_review(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
         sheet_url = stories_sheet.upload()
 
-        pdf = rpdf.ig_monthly_pdf(data, ai_text, sheet_url=sheet_url)
+        pdf = rpdf.ig_monthly_pdf(data, ai_text, sheet_url=sheet_url, score=score)
         mon = data["month"]
         tag = f"{mon['year']}-{mon['month']:02d}"
         fname = f"№{mon['month']:02d}_{mon['year']}_{mon['name'].capitalize()}_IG_месячный.pdf"
