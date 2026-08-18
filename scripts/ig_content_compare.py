@@ -10,6 +10,7 @@ import datetime as dt
 
 sys.path.insert(0, os.path.dirname(__file__))
 import fetch_ig_weekly as fiw  # noqa: E402
+import report_format as rf  # noqa: E402
 
 STORE = os.path.join(fiw.DATA_DIR, "ig_stories", "store.json")
 MINSK = dt.timezone(dt.timedelta(hours=3))  # локальное время GoTrips (UTC+3)
@@ -134,101 +135,83 @@ LABELS = {"REELS": "🎬 Reels", "POSTS": "🖼 Посты", "STORIES": "📸 С
 
 
 def render_compare(cmp: dict, stories_note: str = "") -> str:
-    """Текстовый блок сравнения типов контента."""
-    L = ["━━━ СРАВНЕНИЕ ТИПОВ КОНТЕНТА ━━━"]
-    if stories_note:
-        L.append(stories_note)
-
-    def _f(n):
-        return f"{n:,}".replace(",", " ")
-
+    """Блок сравнения типов контента (чистая вёрстка)."""
+    L = [rf.b("Сравнение типов контента")]
     for t in ("REELS", "POSTS", "STORIES"):
         a = cmp.get(t, {})
         if a.get("count"):
-            L.append(f"{LABELS[t]}: {a['count']} шт | ср.просмотры {_f(a['views_avg'])} | "
-                     f"сумма {_f(a['views_sum'])}")
+            L.append(f"{LABELS[t]} — {a['count']} шт · ср. {rf.fmt(a['views_avg'])} · "
+                     f"всего {rf.fmt(a['views_sum'])}")
         else:
-            L.append(f"{LABELS[t]}: нет данных")
-
-    # вывод: какой тип даёт больше просмотров на единицу
+            L.append(f"{LABELS[t]} — нет данных")
     ranked = sorted(("REELS", "POSTS", "STORIES"),
                     key=lambda t: cmp.get(t, {}).get("views_avg", 0), reverse=True)
     best = ranked[0]
     if cmp.get(best, {}).get("views_avg"):
-        L.append(f"👉 Лучший по ср.просмотрам: {LABELS[best]} "
-                 f"({_f(cmp[best]['views_avg'])}/ед)")
+        L.append(f"Лучший по ср. просмотрам: {LABELS[best]}")
     return "\n".join(L)
 
 
 def render_stories(stories, note: str = "") -> str:
-    """Текстовый блок аналитики сторис за период."""
-    def _f(n):
-        return f"{n:,}".replace(",", " ")
-
-    L = ["━━━ 📸 СТОРИС ━━━"]
-    if note:
-        L.append(note)
+    """Блок аналитики сторис (чистая вёрстка)."""
+    _f = rf.fmt
+    head = "📸 Сторис" + (f"  ·  {note}" if note else "")
+    L = [rf.b(head)]
     if not stories:
-        L.append("Данных по сторис за период нет (база копится ежедневно).")
+        L.append("Данных за период нет (база копится ежедневно).")
         return "\n".join(L)
 
     n = len(stories)
+
     def _s(metric):
         return sum((s.get("insights", {}).get(metric) or 0) for s in stories)
     views, reach = _s("views"), _s("reach")
-    replies, nav = _s("replies"), _s("navigation")
-    profile_visits, follows = _s("profile_visits"), _s("follows")
-    shares, inter = _s("shares"), _s("total_interactions")
-    # удержание: доля навигаций tap_forward/exit не отдаётся отдельно без breakdown,
-    # показываем базовые агрегаты
-    L.append(f"Сторис: {n} шт | 👁 просмотры {_f(views)} (ср. {_f(round(views/n))}) | "
-             f"🎯 охват {_f(reach)}")
-    L.append(f"💬 ответы {_f(replies)} | ↗️ репосты {_f(shares)} | "
-             f"👤 визиты в профиль {_f(profile_visits)} | "
-             f"➕ подписки {_f(follows)} | Σ взаимодействий {_f(inter)}")
+    L.append(f"Всего — {n} · просмотры {_f(views)} (ср. {_f(round(views/n))}) · "
+             f"охват {_f(reach)}")
+    L.append(f"Профиль {_f(_s('profile_visits'))} · подписки {_f(_s('follows'))} · "
+             f"ответы {_f(_s('replies'))} · репосты {_f(_s('shares'))}")
 
-    # Навигация + удержание
     def _nav(k):
         return sum((s.get("nav", {}).get(k) or 0) for s in stories)
-    tf, tb = _nav("tap_forward"), _nav("tap_back")
-    te, sf = _nav("tap_exit"), _nav("swipe_forward")
-    nav_total = tf + tb + te + sf
-    if nav_total:
+    tf, tb, te, sf = _nav("tap_forward"), _nav("tap_back"), _nav("tap_exit"), _nav("swipe_forward")
+    if tf + tb + te + sf:
         exits = te + sf
-        # удержание = доля НЕ ушедших от просмотров (уходы = закрытия + свайпы к др. аккаунтам)
         retention = (1 - exits / views) * 100 if views else 0
-        L.append(f"🧭 Навигация: ⏭ вперёд {_f(tf)} | ⏮ назад {_f(tb)} | "
-                 f"✖️ закрыли {_f(te)} | ➡️ ушли к др. {_f(sf)}")
-        L.append(f"🔒 Удержание: {retention:.0f}% "
-                 f"(ушло {_f(exits)} из {_f(views)} просмотров)")
-    # Детализация для пост-обработки: сторис с ID (дата #№ время)
+        L.append(f"Навигация: вперёд {_f(tf)} · назад {_f(tb)} · "
+                 f"закрыли {_f(te)} · ушли к др. {_f(sf)}")
+        L.append(f"Удержание — {retention:.0f}%  (ушло {_f(exits)} из {_f(views)})")
+
     enr = enrich_stories(stories)
 
     def _story_line(s):
         ins = s.get("insights", {})
         r = s.get("retention_pct")
-        rt = f"🔒{r}%" if r is not None else "🔒—"
-        cap = (s.get("caption") or "").replace("\n", " ").strip()[:32]
-        typ = "🎬" if s.get("media_type") == "VIDEO" else "🖼"
-        return (f"  📅{s['local_date']} #{s['num']} ({s['local_time']}) {typ} · "
-                f"👁{_f(ins.get('views') or 0)} {rt} 👤{_f(ins.get('profile_visits') or 0)} "
-                f"➕{_f(ins.get('follows') or 0)}" + (f" · {cap}" if cap else ""))
+        rt = f"удерж {r}%" if r is not None else "удерж —"
+        cap = (s.get("caption") or "").replace("\n", " ").strip()[:30]
+        typ = "видео" if s.get("media_type") == "VIDEO" else "фото"
+        return (f"{s['local_date']} #{s['num']} ({s['local_time']}) {typ} — "
+                f"{_f(ins.get('views') or 0)} просм · {rt} · "
+                f"профиль {_f(ins.get('profile_visits') or 0)} · "
+                f"подписки {_f(ins.get('follows') or 0)}"
+                + (f"\n   «{cap}»" if cap else ""))
 
     top = sorted(enr, key=lambda s: (s.get("insights", {}).get("views") or 0),
                  reverse=True)[:5]
     if top:
-        L.append("🏆 Топ сторис (по просмотрам):")
-        L += [_story_line(s) for s in top]
+        L.append("")
+        L.append(rf.b("Топ сторис — по просмотрам"))
+        L += [f"{i}. {_story_line(s)}" for i, s in enumerate(top, 1)]
 
-    # слабое удержание (среди сторис с достаточными просмотрами)
     with_ret = [s for s in enr if s.get("retention_pct") is not None
                 and (s.get("insights", {}).get("views") or 0) >= 300]
     weak = sorted(with_ret, key=lambda s: s["retention_pct"])[:3]
     if weak and len(with_ret) > 3:
-        L.append("⚠️ Слабое удержание (что улучшить):")
-        L += [_story_line(s) for s in weak]
+        L.append("")
+        L.append(rf.b("Слабое удержание — что улучшить"))
+        L += [f"{i}. {_story_line(s)}" for i, s in enumerate(weak, 1)]
 
-    L.append("ℹ️ ID сторис = дата #номер-за-день (время). Ищи в IG → Архив → тот день.")
+    L.append("")
+    L.append("ID сторис = дата #номер (время). Найти: IG → Архив → тот день.")
     return "\n".join(L)
 
 

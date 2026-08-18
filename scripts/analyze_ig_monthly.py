@@ -4,31 +4,14 @@ import os
 import datetime as dt
 
 sys.path.insert(0, os.path.dirname(__file__))
+import report_format as rf  # noqa: E402
 import ig_content_compare as icc  # noqa: E402
-
-
-def _fmt(n):
-    if n is None:
-        return "—"
-    return f"{n:,}".replace(",", " ")
-
-
-def _delta(cur, prev):
-    if cur is None or prev in (None, 0):
-        return ""
-    p = (cur - prev) / prev * 100
-    arrow = "▲" if p >= 0 else "▼"
-    return f" ({arrow}{abs(p):.0f}%)"
-
-
-def _line(label, cur, prev):
-    return f"{label}: {_fmt(cur)}{_delta(cur, prev)}"
 
 
 def _label(c):
     t = c.get("media_product_type")
-    return {"REELS": "🎬 Reels", "FEED": "🖼 Пост",
-            "CAROUSEL_CONTAINER": "🎠 Карусель"}.get(t, t or "медиа")
+    return {"REELS": "Reels", "FEED": "Пост",
+            "CAROUSEL_CONTAINER": "Карусель"}.get(t, t or "медиа")
 
 
 def build_digest(data) -> str:
@@ -36,69 +19,66 @@ def build_digest(data) -> str:
     tm = data.get("totals_month", {})
     tp = data.get("totals_prev", {})
     mon = data["month"]
-    L = []
+    S = []
 
-    L.append(f"📸 INSTAGRAM — ОТЧЁТ ЗА МЕСЯЦ @{prof.get('username', 'gotrips_by')}")
-    L.append(f"{mon['name'].capitalize()} {mon['year']} "
-             f"(в скобках — к прошлому месяцу: {data['prev_month']['name']})")
-    L.append("")
-    L.append(f"👥 Подписчиков: {_fmt(prof.get('followers_count'))}")
+    S.append(rf.b("📸 INSTAGRAM · ОТЧЁТ ЗА МЕСЯЦ"))
+    S.append(f"@{prof.get('username', 'gotrips_by')} · {mon['name'].capitalize()} "
+             f"{mon['year']} · vs {data['prev_month']['name']}")
+
+    S.append("")
+    S.append(rf.b("Аудитория"))
+    S.append(rf.line("Подписчики", prof.get("followers_count")))
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        L.append(f"📈 Прирост за месяц: +{_fmt(fg)}{_delta(fg, fgp)}")
-    L.append(f"📝 Публикаций (рилс+посты): {data.get('posts_count', 0)}")
+        S.append(f"Прирост за месяц — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
+    S.append(f"Публикаций (рилс+посты) — {data.get('posts_count', 0)}")
 
-    L.append("")
-    L.append("━━━ ОХВАТ И ПРОСМОТРЫ ━━━")
-    L.append("👁 " + _line("Просмотры", tm.get("views"), tp.get("views")))
-    L.append("🎯 " + _line("Охват", tm.get("reach"), tp.get("reach")))
-    L.append("👤 " + _line("Просмотры профиля", tm.get("profile_views"),
-                           tp.get("profile_views")))
-    L.append("🤝 " + _line("Вовлечённые аккаунты", tm.get("accounts_engaged"),
-                           tp.get("accounts_engaged")))
+    S.append("")
+    S.append(rf.b("Охват и просмотры"))
+    S.append(rf.line("Просмотры", tm.get("views"), tp.get("views")))
+    S.append(rf.line("Охват", tm.get("reach"), tp.get("reach")))
+    S.append(rf.line("Просмотры профиля", tm.get("profile_views"), tp.get("profile_views")))
+    S.append(rf.line("Вовлечено аккаунтов", tm.get("accounts_engaged"),
+                     tp.get("accounts_engaged")))
 
-    L.append("")
-    L.append("━━━ ВЗАИМОДЕЙСТВИЯ ━━━")
-    L.append("❤️ " + _line("Лайки", tm.get("likes"), tp.get("likes")))
-    L.append("💬 " + _line("Комментарии", tm.get("comments"), tp.get("comments")))
-    L.append("🔖 " + _line("Сохранения", tm.get("saves"), tp.get("saves")))
-    L.append("↗️ " + _line("Репосты", tm.get("shares"), tp.get("shares")))
+    S.append("")
+    S.append(rf.b("Вовлечённость"))
+    S.append(rf.line("Лайки", tm.get("likes"), tp.get("likes")))
+    S.append(rf.line("Комментарии", tm.get("comments"), tp.get("comments")))
+    S.append(rf.line("Сохранения", tm.get("saves"), tp.get("saves")))
+    S.append(rf.line("Репосты", tm.get("shares"), tp.get("shares")))
 
     content = [c for c in data.get("content", []) if c.get("insights", {}).get("views")]
-    L.append("")
+    S.append("")
     if content:
         views = [c["insights"]["views"] for c in content]
         avg = sum(views) / len(views)
         viral_thr = avg * 2
         content.sort(key=lambda c: c["insights"]["views"], reverse=True)
-        L.append("━━━ ТОП ПУБЛИКАЦИЙ МЕСЯЦА ━━━")
-        for c in content[:10]:
+        S.append(rf.b(f"Топ публикаций месяца · {len(content)}"))
+        for i, c in enumerate(content[:10], 1):
             ins = c["insights"]
             v = ins.get("views", 0)
-            flag = " 🔥ЗАЛЁТ" if v >= viral_thr else ""
-            cap = (c.get("caption") or "").replace("\n", " ").strip()[:50]
-            L.append(f"{_label(c)} · 👁{_fmt(v)} ❤️{_fmt(ins.get('likes'))} "
-                     f"🔖{_fmt(ins.get('saved'))} ↗️{_fmt(ins.get('shares'))}{flag}")
-            L.append(f"   {cap}")
+            flag = "  🔥" if v >= viral_thr else ""
+            cap = (c.get("caption") or "").replace("\n", " ").strip()[:52]
+            S.append(f"{i}. {_label(c)} — {rf.fmt(v)} просм · "
+                     f"❤{rf.fmt(ins.get('likes'))} 🔖{rf.fmt(ins.get('saved'))}{flag}")
+            if cap:
+                S.append(f"   «{cap}»")
             if c.get("permalink"):
-                L.append(f"   {c['permalink']}")
+                S.append(f"   {c['permalink']}")
         virals = [c for c in content if c["insights"]["views"] >= viral_thr]
         if virals:
-            L.append("")
-            L.append(f"🔥 Залетевших публикаций (≥2× среднего): {len(virals)}")
+            S.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
 
-    # Сторис + сравнение типов
     stories = data.get("stories", [])
-    note = ""
-    if data.get("stories_earliest"):
-        note = f"(данные сторис копятся с {data['stories_earliest']})"
-    L.append("")
-    L.append(icc.render_stories(stories, note))
-    L.append("")
-    cmp = icc.compare(data.get("content", []), stories)
-    L.append(icc.render_compare(cmp))
+    note = f"данные копятся с {data['stories_earliest']}" if data.get("stories_earliest") else ""
+    S.append("")
+    S.append(icc.render_stories(stories, note))
+    S.append("")
+    S.append(icc.render_compare(icc.compare(data.get("content", []), stories)))
 
-    return "\n".join(L)
+    return "\n".join(S)
 
 
 def build_ai_summary(data) -> str:

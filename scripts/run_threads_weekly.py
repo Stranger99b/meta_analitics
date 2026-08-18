@@ -53,16 +53,17 @@ def main():
         data = fetch_and_save()
         report = build_digest(data)
 
+        import report_format as rf
         ai_text = qwen_commentary(build_ai_summary(data))
         if ai_text:
-            report += "\n\n━━━ 🤖 ВЫВОД НЕДЕЛИ (AI) ━━━\n" + ai_text
+            report += "\n\n" + rf.b("🤖 Вывод недели (AI)") + "\n" + ai_text
 
         date_str = datetime.now().strftime("%Y-%m-%d")
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
         os.makedirs(reports_dir, exist_ok=True)
         with open(os.path.join(reports_dir, f"threads_weekly_{date_str}.txt"), "w",
                   encoding="utf-8") as f:
-            f.write(report)
+            f.write(rf.plain(report))
 
         # Threads-дайджест идёт в группу Go_контент, тему «Отчет» (не в личный чат)
         chat_id = os.environ.get("THREADS_TG_CHAT_ID")
@@ -72,7 +73,7 @@ def main():
             send_kwargs["chat_id"] = chat_id
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
-        send_message(report, **send_kwargs)
+        send_message(rf.to_html(report), parse_mode="HTML", **send_kwargs)
         print(f"[run_threads_weekly] Готово → reports/threads_weekly_{date_str}.txt")
     except Exception:
         err = traceback.format_exc()

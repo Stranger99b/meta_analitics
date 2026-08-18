@@ -1,112 +1,103 @@
-"""Формирование текста недельного дайджеста Instagram из данных fetch_ig_weekly."""
-import datetime
+"""Текст недельного дайджеста Instagram (чистая вёрстка для Telegram HTML)."""
+import sys
+import os
+import datetime as dt
+
+sys.path.insert(0, os.path.dirname(__file__))
+import report_format as rf  # noqa: E402
+import ig_content_compare as icc  # noqa: E402
 
 
-def _fmt(n):
-    if n is None:
-        return "—"
-    return f"{n:,}".replace(",", " ")
-
-
-def _delta(cur, prev):
-    """WoW-стрелка вида (▲12%)."""
-    if cur is None or prev in (None, 0):
-        return ""
-    p = (cur - prev) / prev * 100
-    arrow = "▲" if p >= 0 else "▼"
-    return f" ({arrow}{abs(p):.0f}%)"
-
-
-def _line(label, cur, prev):
-    return f"{label}: {_fmt(cur)}{_delta(cur, prev)}"
+def _period(week):
+    a = dt.date.fromisoformat(week["since"])
+    b = dt.date.fromisoformat(week["until"])
+    return f"{a.strftime('%d.%m')} – {b.strftime('%d.%m')}"
 
 
 def _content_label(c):
     t = c.get("media_product_type")
-    return {"REELS": "🎬 Reels", "FEED": "🖼 Пост",
-            "CAROUSEL_CONTAINER": "🎠 Карусель"}.get(t, t or "медиа")
+    return {"REELS": "Reels", "FEED": "Пост",
+            "CAROUSEL_CONTAINER": "Карусель"}.get(t, t or "медиа")
 
 
 def build_digest(data) -> str:
     prof = data.get("profile", {})
     tw = data.get("totals_week", {})
     tp = data.get("totals_prev", {})
-    L = []
+    S = []
 
-    L.append(f"📸 INSTAGRAM — НЕДЕЛЬНЫЙ ДАЙДЖЕСТ @{prof.get('username', 'gotrips_by')}")
-    L.append(f"Неделя {data['week']['since']} → {data['week']['until']} "
-             f"(в скобках — к прошлой неделе)")
-    L.append("")
-    L.append(f"👥 Подписчиков: {_fmt(prof.get('followers_count'))}")
+    S.append(rf.b("📸 INSTAGRAM · НЕДЕЛЬНЫЙ ДАЙДЖЕСТ"))
+    S.append(f"@{prof.get('username', 'gotrips_by')} · {_period(data['week'])} "
+             f"· vs пред. неделя")
+
+    # Аудитория
+    S.append("")
+    S.append(rf.b("Аудитория"))
+    S.append(rf.line("Подписчики", prof.get("followers_count")))
     fg, fgp = data.get("follower_growth_week"), data.get("follower_growth_prev")
     if fg is not None:
-        L.append(f"📈 Прирост за неделю: +{_fmt(fg)}{_delta(fg, fgp)}")
+        S.append(f"Прирост — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
 
-    L.append("")
-    L.append("━━━ ОХВАТ И ПРОСМОТРЫ ━━━")
-    L.append("👁 " + _line("Просмотры", tw.get("views"), tp.get("views")))
-    L.append("🎯 " + _line("Охват", tw.get("reach"), tp.get("reach")))
-    L.append("👤 " + _line("Просмотры профиля", tw.get("profile_views"),
-                           tp.get("profile_views")))
-    L.append("🤝 " + _line("Вовлечённые аккаунты", tw.get("accounts_engaged"),
-                           tp.get("accounts_engaged")))
+    # Охват
+    S.append("")
+    S.append(rf.b("Охват и просмотры"))
+    S.append(rf.line("Просмотры", tw.get("views"), tp.get("views")))
+    S.append(rf.line("Охват", tw.get("reach"), tp.get("reach")))
+    S.append(rf.line("Просмотры профиля", tw.get("profile_views"), tp.get("profile_views")))
+    S.append(rf.line("Вовлечено аккаунтов", tw.get("accounts_engaged"),
+                     tp.get("accounts_engaged")))
 
-    L.append("")
-    L.append("━━━ ВЗАИМОДЕЙСТВИЯ ━━━")
-    L.append("❤️ " + _line("Лайки", tw.get("likes"), tp.get("likes")))
-    L.append("💬 " + _line("Комментарии", tw.get("comments"), tp.get("comments")))
-    L.append("🔖 " + _line("Сохранения", tw.get("saves"), tp.get("saves")))
-    L.append("↗️ " + _line("Репосты", tw.get("shares"), tp.get("shares")))
-    L.append("Σ " + _line("Всего взаимодействий", tw.get("total_interactions"),
-                          tp.get("total_interactions")))
+    # Вовлечённость
+    S.append("")
+    S.append(rf.b("Вовлечённость"))
+    S.append(rf.line("Лайки", tw.get("likes"), tp.get("likes")))
+    S.append(rf.line("Комментарии", tw.get("comments"), tp.get("comments")))
+    S.append(rf.line("Сохранения", tw.get("saves"), tp.get("saves")))
+    S.append(rf.line("Репосты", tw.get("shares"), tp.get("shares")))
+    S.append(rf.line("Всего", tw.get("total_interactions"), tp.get("total_interactions")))
 
-    # ── Контент недели ──
+    # Контент недели
     content = [c for c in data.get("content", []) if c.get("insights", {}).get("views")]
-    L.append("")
+    S.append("")
     if content:
-        views = sorted(c["insights"]["views"] for c in content)
+        views = [c["insights"]["views"] for c in content]
         avg = sum(views) / len(views)
         viral_thr = avg * 2
         content.sort(key=lambda c: c["insights"]["views"], reverse=True)
-
-        L.append(f"━━━ КОНТЕНТ НЕДЕЛИ ({len(content)} публ., ср. просмотры "
-                 f"{_fmt(round(avg))}) ━━━")
-        for c in content[:8]:
+        S.append(rf.b(f"Контент недели · {len(content)} публ. · ср. {rf.fmt(round(avg))}"))
+        for i, c in enumerate(content[:8], 1):
             ins = c["insights"]
             v = ins.get("views", 0)
-            flag = " 🔥ЗАЛЁТ" if v >= viral_thr else ""
-            cap = (c.get("caption") or "").replace("\n", " ").strip()[:50]
-            L.append(f"{_content_label(c)} · 👁{_fmt(v)} ❤️{_fmt(ins.get('likes'))} "
-                     f"🔖{_fmt(ins.get('saved'))} ↗️{_fmt(ins.get('shares'))}"
-                     f"{flag}")
-            L.append(f"   {cap}")
+            flag = "  🔥" if v >= viral_thr else ""
+            cap = (c.get("caption") or "").replace("\n", " ").strip()[:52]
+            S.append(f"{i}. {_content_label(c)} — {rf.fmt(v)} просм · "
+                     f"❤{rf.fmt(ins.get('likes'))} 🔖{rf.fmt(ins.get('saved'))}{flag}")
+            if cap:
+                S.append(f"   «{cap}»")
             if c.get("permalink"):
-                L.append(f"   {c['permalink']}")
+                S.append(f"   {c['permalink']}")
         virals = [c for c in content if c["insights"]["views"] >= viral_thr]
         if virals:
-            L.append("")
-            L.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
+            S.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
     else:
-        L.append("━━━ КОНТЕНТ НЕДЕЛИ ━━━")
-        L.append("За неделю новых публикаций с инсайтами не найдено.")
+        S.append(rf.b("Контент недели"))
+        S.append("Новых публикаций с инсайтами не найдено.")
 
-    # ── Сторис + сравнение типов ──
-    import ig_content_compare as icc
+    # Сторис
     stories = data.get("stories", [])
-    note = ""
-    if data.get("stories_earliest"):
-        note = f"(данные сторис копятся с {data['stories_earliest']})"
-    L.append("")
-    L.append(icc.render_stories(stories, note))
-    L.append("")
-    cmp = icc.compare(data.get("content", []), stories)
-    L.append(icc.render_compare(cmp))
+    note = f"данные копятся с {data['stories_earliest']}" if data.get("stories_earliest") else ""
+    S.append("")
+    S.append(icc.render_stories(stories, note))
 
-    return "\n".join(L)
+    # Сравнение типов
+    S.append("")
+    S.append(icc.render_compare(icc.compare(data.get("content", []), stories)))
+
+    return "\n".join(S)
 
 
 def build_ai_summary(data) -> str:
-    """Компактная сводка для передачи в Qwen (без ссылок и лишнего)."""
+    """Компактная сводка для Qwen (не отображается — вёрстка не важна)."""
     tw, tp = data.get("totals_week", {}), data.get("totals_prev", {})
     parts = [f"Подписчики: {data['profile'].get('followers_count')}, "
              f"прирост за неделю: {data.get('follower_growth_week')}."]
@@ -120,9 +111,6 @@ def build_ai_summary(data) -> str:
         cap = (c.get("caption") or "").replace("\n", " ").strip()[:60]
         parts.append(f"- {_content_label(c)} просмотры={c['insights']['views']} "
                      f"лайки={c['insights'].get('likes')} «{cap}»")
-
-    # сторис + сравнение типов контента (для советов по миксу)
-    import ig_content_compare as icc
     stories = data.get("stories", [])
     cmp = icc.compare(data.get("content", []), stories)
     parts.append("Сравнение типов (кол-во / ср.просмотры):")
@@ -136,6 +124,5 @@ def build_ai_summary(data) -> str:
         nav = icc.stories_nav_agg(stories)
         parts.append(f"Сторис за период: {len(stories)} шт, просмотры={sv}, "
                      f"визиты профиля={pv}, подписки={sf}, "
-                     f"удержание={nav.get('retention_pct')}% "
-                     f"(закрытий={nav.get('tap_exit')}, свайпов к др.={nav.get('swipe_forward')}).")
+                     f"удержание={nav.get('retention_pct')}%.")
     return "\n".join(parts)

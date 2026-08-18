@@ -81,18 +81,19 @@ def main():
     print(f"[run_ig_monthly] Старт месячного отчёта IG (месяц={target or 'предыдущий'})…")
     try:
         data = fetch_and_save(target)
+        import report_format as rf
         report = build_digest(data)
 
         ai_text = qwen_review(build_ai_summary(data))
         if ai_text:
-            report += "\n\n━━━ 🤖 ОЦЕНКА И РЕКОМЕНДАЦИИ (AI) ━━━\n" + ai_text
+            report += "\n\n" + rf.b("🤖 Оценка и рекомендации (AI)") + "\n" + ai_text
 
         tag = f"{data['month']['year']}-{data['month']['month']:02d}"
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
         os.makedirs(reports_dir, exist_ok=True)
         with open(os.path.join(reports_dir, f"ig_monthly_{tag}.txt"), "w",
                   encoding="utf-8") as f:
-            f.write(report)
+            f.write(rf.plain(report))
 
         chat_id = os.environ.get("IG_TG_CHAT_ID")
         thread_id = os.environ.get("IG_TG_THREAD_ID")
@@ -101,7 +102,7 @@ def main():
             send_kwargs["chat_id"] = chat_id
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
-        send_message(report, **send_kwargs)
+        send_message(rf.to_html(report), parse_mode="HTML", **send_kwargs)
 
         import ig_content_compare as icc
         from send_telegram import send_document

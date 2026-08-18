@@ -1,27 +1,13 @@
-"""Текст МЕСЯЧНОГО отчёта Threads + сводка для AI (рекомендации + оценка SMM)."""
+"""Текст МЕСЯЧНОГО отчёта Threads (чистая вёрстка) + сводка для AI."""
+import sys
+import os
 import datetime as dt
 
-
-def _fmt(n):
-    if n is None:
-        return "—"
-    return f"{n:,}".replace(",", " ")
-
-
-def _delta(cur, prev):
-    if cur is None or prev in (None, 0):
-        return ""
-    p = (cur - prev) / prev * 100
-    arrow = "▲" if p >= 0 else "▼"
-    return f" ({arrow}{abs(p):.0f}%)"
-
-
-def _line(label, cur, prev):
-    return f"{label}: {_fmt(cur)}{_delta(cur, prev)}"
+sys.path.insert(0, os.path.dirname(__file__))
+import report_format as rf  # noqa: E402
 
 
 def _cadence(data):
-    """Постов за месяц и в среднем в неделю."""
     n = data.get("posts_count", 0)
     ms = dt.date.fromisoformat(data["month"]["since"])
     me = dt.date.fromisoformat(data["month"]["until"])
@@ -35,61 +21,61 @@ def build_digest(data) -> str:
     tm = data.get("totals_month", {})
     tp = data.get("totals_prev", {})
     mon = data["month"]
-    L = []
+    S = []
 
-    L.append(f"🧵 THREADS — ОТЧЁТ ЗА МЕСЯЦ @{prof.get('username', 'gotrips_by')}")
-    L.append(f"{mon['name'].capitalize()} {mon['year']} "
-             f"(в скобках — к прошлому месяцу: {data['prev_month']['name']})")
-    L.append("")
+    S.append(rf.b("🧵 THREADS · ОТЧЁТ ЗА МЕСЯЦ"))
+    S.append(f"@{prof.get('username', 'gotrips_by')} · {mon['name'].capitalize()} "
+             f"{mon['year']} · vs {data['prev_month']['name']}")
+
+    S.append("")
+    S.append(rf.b("Аудитория"))
     if data.get("followers_count") is not None:
-        L.append(f"👥 Подписчиков: {_fmt(data.get('followers_count'))}")
+        S.append(rf.line("Подписчики", data.get("followers_count")))
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        L.append(f"📈 Прирост за месяц: +{_fmt(fg)}{_delta(fg, fgp)}")
+        S.append(f"Прирост за месяц — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
     n, per_week = _cadence(data)
-    L.append(f"📝 Постов за месяц: {n} (~{per_week:.1f}/нед)")
+    S.append(f"Постов за месяц — {n}  (~{per_week:.1f}/нед)")
 
-    L.append("")
-    L.append("━━━ АКТИВНОСТЬ ━━━")
-    L.append("👁 " + _line("Просмотры", tm.get("views"), tp.get("views")))
-    L.append("❤️ " + _line("Лайки", tm.get("likes"), tp.get("likes")))
-    L.append("💬 " + _line("Ответы", tm.get("replies"), tp.get("replies")))
-    L.append("🔁 " + _line("Репосты", tm.get("reposts"), tp.get("reposts")))
-    L.append("🗨 " + _line("Цитирования", tm.get("quotes"), tp.get("quotes")))
+    S.append("")
+    S.append(rf.b("Активность"))
+    S.append(rf.line("Просмотры", tm.get("views"), tp.get("views")))
+    S.append(rf.line("Лайки", tm.get("likes"), tp.get("likes")))
+    S.append(rf.line("Ответы", tm.get("replies"), tp.get("replies")))
+    S.append(rf.line("Репосты", tm.get("reposts"), tp.get("reposts")))
+    S.append(rf.line("Цитирования", tm.get("quotes"), tp.get("quotes")))
     if tm.get("clicks") is not None:
-        L.append("🔗 " + _line("Клики", tm.get("clicks"), tp.get("clicks")))
-
-    # средний охват на пост
+        S.append(rf.line("Клики", tm.get("clicks"), tp.get("clicks")))
     if n and tm.get("views"):
-        L.append(f"📊 Ср. просмотров на пост: {_fmt(round(tm['views'] / n))}")
+        S.append(rf.line("Ср. просмотров на пост", round(tm["views"] / n)))
 
     posts = [p for p in data.get("posts", []) if p.get("insights", {}).get("views")]
-    L.append("")
+    S.append("")
     if posts:
         views = [p["insights"]["views"] for p in posts]
         avg = sum(views) / len(views)
         viral_thr = avg * 2
         posts.sort(key=lambda p: p["insights"]["views"], reverse=True)
-        L.append(f"━━━ ТОП ПОСТОВ МЕСЯЦА ━━━")
-        for p in posts[:10]:
+        S.append(rf.b(f"Топ постов месяца · {len(posts)}"))
+        for i, p in enumerate(posts[:10], 1):
             ins = p["insights"]
             v = ins.get("views", 0)
-            flag = " 🔥ЗАЛЁТ" if v >= viral_thr else ""
+            flag = "  🔥" if v >= viral_thr else ""
             text = (p.get("text") or "").replace("\n", " ").strip()[:55]
-            L.append(f"👁{_fmt(v)} ❤️{_fmt(ins.get('likes'))} "
-                     f"💬{_fmt(ins.get('replies'))} 🔁{_fmt(ins.get('reposts'))}{flag}")
-            L.append(f"   {text}")
+            S.append(f"{i}. {rf.fmt(v)} просм · ❤{rf.fmt(ins.get('likes'))} "
+                     f"💬{rf.fmt(ins.get('replies'))} 🔁{rf.fmt(ins.get('reposts'))}{flag}")
+            if text:
+                S.append(f"   «{text}»")
             if p.get("permalink"):
-                L.append(f"   {p['permalink']}")
+                S.append(f"   {p['permalink']}")
         virals = [p for p in posts if p["insights"]["views"] >= viral_thr]
         if virals:
-            L.append("")
-            L.append(f"🔥 Залетевших постов (≥2× среднего): {len(virals)}")
+            S.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
     else:
-        L.append("━━━ ПОСТЫ МЕСЯЦА ━━━")
-        L.append("За месяц постов с инсайтами не найдено.")
+        S.append(rf.b("Посты месяца"))
+        S.append("Постов с инсайтами не найдено.")
 
-    return "\n".join(L)
+    return "\n".join(S)
 
 
 def build_ai_summary(data) -> str:

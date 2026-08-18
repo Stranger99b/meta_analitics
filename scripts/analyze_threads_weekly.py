@@ -1,78 +1,73 @@
-"""Формирование текста недельного дайджеста Threads из данных fetch_threads_weekly."""
+"""Текст недельного дайджеста Threads (чистая вёрстка для Telegram HTML)."""
+import sys
+import os
+import datetime as dt
+
+sys.path.insert(0, os.path.dirname(__file__))
+import report_format as rf  # noqa: E402
 
 
-def _fmt(n):
-    if n is None:
-        return "—"
-    return f"{n:,}".replace(",", " ")
-
-
-def _delta(cur, prev):
-    if cur is None or prev in (None, 0):
-        return ""
-    p = (cur - prev) / prev * 100
-    arrow = "▲" if p >= 0 else "▼"
-    return f" ({arrow}{abs(p):.0f}%)"
-
-
-def _line(label, cur, prev):
-    return f"{label}: {_fmt(cur)}{_delta(cur, prev)}"
+def _period(week):
+    a = dt.date.fromisoformat(week["since"])
+    b = dt.date.fromisoformat(week["until"])
+    return f"{a.strftime('%d.%m')} – {b.strftime('%d.%m')}"
 
 
 def build_digest(data) -> str:
     prof = data.get("profile", {})
     tw = data.get("totals_week", {})
     tp = data.get("totals_prev", {})
-    L = []
+    S = []
 
-    L.append(f"🧵 THREADS — НЕДЕЛЬНЫЙ ДАЙДЖЕСТ @{prof.get('username', 'gotrips_by')}")
-    L.append(f"Неделя {data['week']['since']} → {data['week']['until']} "
-             f"(в скобках — к прошлой неделе)")
-    L.append("")
+    S.append(rf.b("🧵 THREADS · НЕДЕЛЬНЫЙ ДАЙДЖЕСТ"))
+    S.append(f"@{prof.get('username', 'gotrips_by')} · {_period(data['week'])} "
+             f"· vs пред. неделя")
+
+    S.append("")
+    S.append(rf.b("Аудитория"))
     if data.get("followers_count") is not None:
-        L.append(f"👥 Подписчиков: {_fmt(data.get('followers_count'))}")
+        S.append(rf.line("Подписчики", data.get("followers_count")))
     fg, fgp = data.get("follower_growth_week"), data.get("follower_growth_prev")
     if fg is not None:
-        L.append(f"📈 Прирост за неделю: +{_fmt(fg)}{_delta(fg, fgp)}")
+        S.append(f"Прирост за неделю — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
 
-    L.append("")
-    L.append("━━━ АКТИВНОСТЬ ━━━")
-    L.append("👁 " + _line("Просмотры", tw.get("views"), tp.get("views")))
-    L.append("❤️ " + _line("Лайки", tw.get("likes"), tp.get("likes")))
-    L.append("💬 " + _line("Ответы", tw.get("replies"), tp.get("replies")))
-    L.append("🔁 " + _line("Репосты", tw.get("reposts"), tp.get("reposts")))
-    L.append("🗨 " + _line("Цитирования", tw.get("quotes"), tp.get("quotes")))
+    S.append("")
+    S.append(rf.b("Активность"))
+    S.append(rf.line("Просмотры", tw.get("views"), tp.get("views")))
+    S.append(rf.line("Лайки", tw.get("likes"), tp.get("likes")))
+    S.append(rf.line("Ответы", tw.get("replies"), tp.get("replies")))
+    S.append(rf.line("Репосты", tw.get("reposts"), tp.get("reposts")))
+    S.append(rf.line("Цитирования", tw.get("quotes"), tp.get("quotes")))
     if tw.get("clicks") is not None:
-        L.append("🔗 " + _line("Клики", tw.get("clicks"), tp.get("clicks")))
+        S.append(rf.line("Клики", tw.get("clicks"), tp.get("clicks")))
 
     posts = [p for p in data.get("posts", []) if p.get("insights", {}).get("views")]
-    L.append("")
+    S.append("")
     if posts:
         views = [p["insights"]["views"] for p in posts]
         avg = sum(views) / len(views)
         viral_thr = avg * 2
         posts.sort(key=lambda p: p["insights"]["views"], reverse=True)
-        L.append(f"━━━ ПОСТЫ НЕДЕЛИ ({len(posts)} шт., ср. просмотры "
-                 f"{_fmt(round(avg))}) ━━━")
-        for p in posts[:8]:
+        S.append(rf.b(f"Посты недели · {len(posts)} · ср. {rf.fmt(round(avg))}"))
+        for i, p in enumerate(posts[:8], 1):
             ins = p["insights"]
             v = ins.get("views", 0)
-            flag = " 🔥ЗАЛЁТ" if v >= viral_thr else ""
+            flag = "  🔥" if v >= viral_thr else ""
             text = (p.get("text") or "").replace("\n", " ").strip()[:55]
-            L.append(f"👁{_fmt(v)} ❤️{_fmt(ins.get('likes'))} "
-                     f"💬{_fmt(ins.get('replies'))} 🔁{_fmt(ins.get('reposts'))}{flag}")
-            L.append(f"   {text}")
+            S.append(f"{i}. {rf.fmt(v)} просм · ❤{rf.fmt(ins.get('likes'))} "
+                     f"💬{rf.fmt(ins.get('replies'))} 🔁{rf.fmt(ins.get('reposts'))}{flag}")
+            if text:
+                S.append(f"   «{text}»")
             if p.get("permalink"):
-                L.append(f"   {p['permalink']}")
+                S.append(f"   {p['permalink']}")
         virals = [p for p in posts if p["insights"]["views"] >= viral_thr]
         if virals:
-            L.append("")
-            L.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
+            S.append(f"🔥 Залетевших (≥2× среднего): {len(virals)}")
     else:
-        L.append("━━━ ПОСТЫ НЕДЕЛИ ━━━")
-        L.append("За неделю новых постов с инсайтами не найдено.")
+        S.append(rf.b("Посты недели"))
+        S.append("Новых постов с инсайтами не найдено.")
 
-    return "\n".join(L)
+    return "\n".join(S)
 
 
 def build_ai_summary(data) -> str:
