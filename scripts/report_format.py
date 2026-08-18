@@ -25,6 +25,22 @@ def plain(s: str) -> str:
     return s.replace(_BO, "").replace(_BC, "")
 
 
+_MDV2_SPECIAL = set(r"_*[]()~`>#+-=|{}.!\\")
+
+
+def to_markdown(s: str) -> str:
+    """MarkdownV2 для Telegram: экранируем спецсимволы, сентинелы → *жирный*."""
+    out = []
+    for ch in s:
+        if ch in (_BO, _BC):
+            out.append(ch)
+        elif ch in _MDV2_SPECIAL:
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out).replace(_BO, "*").replace(_BC, "*")
+
+
 def fmt(n) -> str:
     if n is None:
         return "—"
