@@ -82,5 +82,21 @@ def send_document(content: str, filename: str, chat_id: str = CHAT_ID,
     print(f"[telegram] Sent document {filename}")
 
 
+def send_bytes(content: bytes, filename: str, chat_id: str = CHAT_ID,
+               caption: str | None = None,
+               message_thread_id: int | str | None = None,
+               mime: str = "application/pdf"):
+    """Отправляет бинарный файл (PDF/…) как документ в чат/тему."""
+    data = {"chat_id": chat_id}
+    if caption:
+        data["caption"] = caption
+    if message_thread_id:
+        data["message_thread_id"] = message_thread_id
+    files = {"document": (filename, content, mime)}
+    r = requests.post(f"{API_URL}/sendDocument", data=data, files=files, timeout=120)
+    r.raise_for_status()
+    print(f"[telegram] Sent file {filename} ({len(content)} bytes)")
+
+
 if __name__ == "__main__":
     send_message("✅ Meta Ads бот работает!")
