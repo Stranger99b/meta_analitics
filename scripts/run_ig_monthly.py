@@ -87,10 +87,11 @@ def main():
 
         data = fetch_and_save(target)
         score = smm_score.compute_ig(data)
-        ai_text = qwen_review(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
+        pf = smm_score.plan_vs_fact(data)
+        ai_text = qwen_review(smm_score.as_text(score, pf) + "\n\n" + build_ai_summary(data))
         sheet_url = stories_sheet.upload()
 
-        pdf = rpdf.ig_monthly_pdf(data, ai_text, sheet_url=sheet_url, score=score)
+        pdf = rpdf.ig_monthly_pdf(data, ai_text, sheet_url=sheet_url, score=score, planfact=pf)
         mon = data["month"]
         tag = f"{mon['year']}-{mon['month']:02d}"
         fname = f"№{mon['month']:02d}_{mon['year']}_{mon['name'].capitalize()}_IG_месячный.pdf"

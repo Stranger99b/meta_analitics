@@ -58,9 +58,10 @@ def main():
 
         data = fetch_and_save()
         score = smm_score.compute_threads(data)
-        ai_text = qwen_commentary(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
+        pf = smm_score.plan_vs_fact(data)
+        ai_text = qwen_commentary(smm_score.as_text(score, pf) + "\n\n" + build_ai_summary(data))
 
-        pdf = rpdf.threads_weekly_pdf(data, ai_text, score=score)
+        pdf = rpdf.threads_weekly_pdf(data, ai_text, score=score, planfact=pf)
         b = _dt.date.fromisoformat(data["week"]["until"])
         y, w, _ = b.isocalendar()
         fname = f"№{w}_{y}_Threads_недельный_дайджест.pdf"

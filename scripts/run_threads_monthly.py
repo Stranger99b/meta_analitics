@@ -93,9 +93,10 @@ def main():
 
         data = fetch_and_save(target)
         score = smm_score.compute_threads(data)
-        ai_text = qwen_review(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
+        pf = smm_score.plan_vs_fact(data)
+        ai_text = qwen_review(smm_score.as_text(score, pf) + "\n\n" + build_ai_summary(data))
 
-        pdf = rpdf.threads_monthly_pdf(data, ai_text, score=score)
+        pdf = rpdf.threads_monthly_pdf(data, ai_text, score=score, planfact=pf)
         mon = data["month"]
         tag = f"{mon['year']}-{mon['month']:02d}"
         fname = f"№{mon['month']:02d}_{mon['year']}_{mon['name'].capitalize()}_Threads_месячный.pdf"

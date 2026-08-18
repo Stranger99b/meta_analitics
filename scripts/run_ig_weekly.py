@@ -62,12 +62,13 @@ def main():
 
         data = fetch_and_save()
         score = smm_score.compute_ig(data)
-        ai_text = qwen_commentary(smm_score.as_text(score) + "\n\n" + build_ai_summary(data))
+        pf = smm_score.plan_vs_fact(data)
+        ai_text = qwen_commentary(smm_score.as_text(score, pf) + "\n\n" + build_ai_summary(data))
 
         # вся статистика сторис → Google-таблица (ссылка попадёт в PDF)
         sheet_url = stories_sheet.upload()
 
-        pdf = rpdf.ig_weekly_pdf(data, ai_text, sheet_url=sheet_url, score=score)
+        pdf = rpdf.ig_weekly_pdf(data, ai_text, sheet_url=sheet_url, score=score, planfact=pf)
         b = _dt.date.fromisoformat(data["week"]["until"])
         y, w, _ = b.isocalendar()
         fname = f"№{w}_{y}_IG_недельный_дайджест.pdf"

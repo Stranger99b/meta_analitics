@@ -15,11 +15,57 @@ import datetime as dt
 sys.path.insert(0, os.path.dirname(__file__))
 import ig_content_compare as icc  # noqa: E402
 
-# нормы (можно менять)
-POSTS_PER_WEEK = 5          # норма постов/рилс в неделю
-ER_TARGET = 1.5            # целевой ER, % (взаимодействия/охват)
+# === НОРМАТИВ SMM (можно менять) — цели в неделю ===
+NORM_REELS = 2            # Reels/нед
+NORM_CAROUSELS = 1        # карусели/нед
+NORM_POSTS = 1            # одиночные посты/нед
+NORM_STORY_DAYS = 6       # дней со сторис из 7 (ежедневно)
+NORM_THREADS = 4          # постов Threads/нед
+ER_TARGET = 1.5           # целевой ER, % (взаимодействия/охват)
 RETENTION_TARGET = 80     # целевое удержание сторис, %
 STORY_COVER_TARGET = 0.8  # доля дней периода со сторис на макс. балл
+
+
+def _split_content(content):
+    reels = [c for c in content if c.get("media_product_type") == "REELS"]
+    carous = [c for c in content if c.get("media_type") == "CAROUSEL_ALBUM"]
+    posts = [c for c in content if c.get("media_product_type") == "FEED"
+             and c.get("media_type") != "CAROUSEL_ALBUM"]
+    return reels, carous, posts
+
+
+def _story_days(stories):
+    if not stories:
+        return 0
+    return len({s["local_date"] for s in icc.enrich_stories(stories)})
+
+
+def plan_vs_fact(data):
+    """План (норма) vs факт по типам контента за период. Список
+    {name, plan, fact, ok}. Работает для IG (content) и Threads (posts)."""
+    if "totals_week" in data:
+        weeks, days = 1.0, 7
+    else:
+        m = data["month"]
+        days = (dt.date.fromisoformat(m["until"]) - dt.date.fromisoformat(m["since"])).days
+        weeks = days / 7
+    rows = []
+
+    def add(name, per_week, fact, cap=None):
+        plan = round(per_week * weeks)
+        if cap is not None:
+            plan = min(plan, cap)
+        rows.append({"name": name, "plan": plan, "fact": fact, "ok": fact >= plan})
+
+    if "posts" in data and "content" not in data:  # Threads
+        add("Посты Threads", NORM_THREADS, len(data.get("posts", [])))
+        return rows
+    reels, carous, posts = _split_content(data.get("content", []))
+    add("Reels", NORM_REELS, len(reels))
+    add("Карусели", NORM_CAROUSELS, len(carous))
+    add("Посты", NORM_POSTS, len(posts))
+    add("Сторис (дней)", NORM_STORY_DAYS, _story_days(data.get("stories", [])), cap=days)
+    return rows
 
 WEIGHTS_IG = {"reach": 20, "er": 20, "followers": 18, "stories": 17,
               "activity": 15, "viral": 10}
@@ -113,11 +159,25 @@ def _followers_item(fg, fgp, weight):
     return {"name": "Прирост подписчиков", "frac": frac, "weight": weight, "note": note}
 
 
-def _activity_item(n_posts, days, weight):
-    norm = POSTS_PER_WEEK * days / 7
-    frac = _lin(n_posts, norm * 0.4, norm)
+def _activity_ig(content, days, weight):
+    """Оценка активности IG по МИКСУ: reels + карусели + посты к нормативу."""
+    weeks = days / 7
+    reels, carous, posts = _split_content(content)
+    targets = [(len(reels), NORM_REELS * weeks), (len(carous), NORM_CAROUSELS * weeks),
+               (len(posts), NORM_POSTS * weeks)]
+    fracs = [min(f / t, 1.0) if t else 1.0 for f, t in targets]
+    frac = sum(fracs) / len(fracs)
+    note = (f"Reels {len(reels)}/{round(NORM_REELS*weeks)} · "
+            f"Карусели {len(carous)}/{round(NORM_CAROUSELS*weeks)} · "
+            f"Посты {len(posts)}/{round(NORM_POSTS*weeks)}")
+    return {"name": "Активность (микс)", "frac": frac, "weight": weight, "note": note}
+
+
+def _activity_simple(n, per_week, days, weight):
+    norm = per_week * days / 7
+    frac = _lin(n, norm * 0.4, norm)
     return {"name": "Активность (постинг)", "frac": frac, "weight": weight,
-            "note": f"{n_posts} публ. (норма ~{round(norm)})"}
+            "note": f"{n} постов (норма ~{round(norm)})"}
 
 
 def _viral_item(items, weight):
@@ -155,15 +215,13 @@ def compute_ig(data):
     cur, prev, fg, fgp, days = _period(data)
     content = data.get("content", [])
     stories = data.get("stories", [])
-    n_posts = len([c for c in content
-                   if c.get("media_product_type") in ("REELS", "FEED", "CAROUSEL_CONTAINER")])
     W = WEIGHTS_IG
     items = [
         _reach_item(cur, prev, W["reach"]),
         _er_item(cur, prev, W["er"], ("likes", "comments", "saves", "shares")),
         _followers_item(fg, fgp, W["followers"]),
         _stories_item(stories, days, W["stories"]),
-        _activity_item(n_posts, days, W["activity"]),
+        _activity_ig(content, days, W["activity"]),
         _viral_item(content, W["viral"]),
     ]
     return _finalize(items)
@@ -172,22 +230,26 @@ def compute_ig(data):
 def compute_threads(data):
     cur, prev, fg, fgp, days = _period(data)
     posts = data.get("posts", [])
-    n_posts = len(posts)
     W = WEIGHTS_TH
     items = [
         _reach_item(cur, prev, W["reach"]),
         _er_item(cur, prev, W["er"], ("likes", "replies", "reposts", "quotes")),
         _followers_item(fg, fgp, W["followers"]),
-        _activity_item(n_posts, days, W["activity"]),
+        _activity_simple(len(posts), NORM_THREADS, days, W["activity"]),
         _viral_item(posts, W["viral"]),
     ]
     return _finalize(items)
 
 
-def as_text(score):
-    """Текстовая сводка оценки для передачи в AI-промпт."""
+def as_text(score, pf=None):
+    """Текстовая сводка оценки (+план/факт) для передачи в AI-промпт."""
     lines = [f"ИТОГОВАЯ ОЦЕНКА SMM: {score['grade']}/10 ({score['total']}/100). Разбор:"]
     for it in score["items"]:
         got = "н/д" if it["got"] is None else f"{it['got']}/{it['max']}"
         lines.append(f"- {it['name']}: {got} — {it['note']}")
+    if pf:
+        lines.append("ПЛАН vs ФАКТ (норматив):")
+        for r in pf:
+            mark = "выполнено" if r["ok"] else "НЕ выполнено"
+            lines.append(f"- {r['name']}: план {r['plan']}, факт {r['fact']} — {mark}")
     return "\n".join(lines)

@@ -157,7 +157,8 @@ def _title_band(text_html, width):
     return tt
 
 
-def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None) -> bytes:
+def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
+                  planfact=None) -> bytes:
     prof = data.get("profile", {})
     tw, tp = data.get("totals_week", {}), data.get("totals_prev", {})
     a = dt.date.fromisoformat(data["week"]["since"])
@@ -180,6 +181,8 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None) -> b
                        f"в сравнении с прошлой неделей", ST_SUB))
     if score:
         D += _score_block(score, W)
+    if planfact:
+        D += _planfact_block(planfact, W)
 
     D.append(Paragraph(E("people") + "Аудитория", ST_H2))
     arows = [[Paragraph("Подписчики", ST_LBL),
@@ -492,6 +495,26 @@ def _score_block(score, W):
     return out
 
 
+def _planfact_block(pf, W):
+    out = [Paragraph(E("memo") + "План vs Факт (норматив недели)", ST_H2)]
+    rows = [[Paragraph(x, ST_TH) for x in ("Показатель", "План", "Факт", "")]]
+    for r in pf:
+        mark = ('<font color="#2e9e00"><b>✓</b></font>' if r["ok"]
+                else '<font color="#dc2626"><b>✗</b></font>')
+        rows.append([Paragraph(r["name"], ST_TD), Paragraph(str(r["plan"]), ST_TDR),
+                     Paragraph(str(r["fact"]), ST_TDR), Paragraph(mark, ST_TDR)])
+    t = Table(rows, colWidths=[W*0.54, W*0.16, W*0.16, W*0.14])
+    style = [("BACKGROUND", (0, 0), (-1, 0), LIME),
+             ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+             ("LEFTPADDING", (0, 0), (-1, -1), 5), ("LINEBELOW", (0, 0), (-1, -1), 0.3, LINE)]
+    for i in range(1, len(rows)):
+        if i % 2 == 0:
+            style.append(("BACKGROUND", (0, i), (-1, i), BAND))
+    t.setStyle(TableStyle(style))
+    out.append(t)
+    return out
+
+
 def _audience_table(rows, W):
     t = Table(rows, colWidths=[W*0.56, W*0.44])
     t.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
@@ -502,7 +525,8 @@ def _audience_table(rows, W):
     return t
 
 
-def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None) -> bytes:
+def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
+                   planfact=None) -> bytes:
     prof = data.get("profile", {})
     tm, tp = data.get("totals_month", {}), data.get("totals_prev", {})
     mon = data["month"]
@@ -515,6 +539,8 @@ def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None) -> 
                        f"{data['prev_month']['name']}", ST_SUB))
     if score:
         D += _score_block(score, W)
+    if planfact:
+        D += _planfact_block(planfact, W)
 
     D.append(Paragraph(E("people") + "Аудитория", ST_H2))
     arows = [[Paragraph("Подписчики", ST_LBL),
@@ -562,7 +588,7 @@ def _threads_activity(tw, tp, W):
     return _metric_table(pairs, tw, tp, W)
 
 
-def threads_weekly_pdf(data, ai_text: str = "", score=None) -> bytes:
+def threads_weekly_pdf(data, ai_text: str = "", score=None, planfact=None) -> bytes:
     prof = data.get("profile", {})
     tw, tp = data.get("totals_week", {}), data.get("totals_prev", {})
     a = dt.date.fromisoformat(data["week"]["since"])
@@ -577,6 +603,8 @@ def threads_weekly_pdf(data, ai_text: str = "", score=None) -> bytes:
                        f"в сравнении с прошлой неделей", ST_SUB))
     if score:
         D += _score_block(score, W)
+    if planfact:
+        D += _planfact_block(planfact, W)
     D.append(Paragraph(E("people") + "Аудитория", ST_H2))
     D.append(_audience_table(_threads_audience(data, "follower_growth_week"), W))
     D.append(Paragraph(E("chart") + "Активность", ST_H2))
@@ -588,7 +616,7 @@ def threads_weekly_pdf(data, ai_text: str = "", score=None) -> bytes:
     return buf.getvalue()
 
 
-def threads_monthly_pdf(data, ai_text: str = "", score=None) -> bytes:
+def threads_monthly_pdf(data, ai_text: str = "", score=None, planfact=None) -> bytes:
     prof = data.get("profile", {})
     tm, tp = data.get("totals_month", {}), data.get("totals_prev", {})
     mon = data["month"]
@@ -601,6 +629,8 @@ def threads_monthly_pdf(data, ai_text: str = "", score=None) -> bytes:
                        f"{data['prev_month']['name']}", ST_SUB))
     if score:
         D += _score_block(score, W)
+    if planfact:
+        D += _planfact_block(planfact, W)
     D.append(Paragraph(E("people") + "Аудитория", ST_H2))
     arows = _threads_audience(data, "follower_growth_month")
     arows.append([Paragraph("Постов за месяц", ST_LBL),
