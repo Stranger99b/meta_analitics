@@ -102,6 +102,15 @@ def main():
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
         send_message(report, **send_kwargs)
+
+        import ig_content_compare as icc
+        from send_telegram import send_document
+        stories = data.get("stories", [])
+        if stories:
+            csv = icc.stories_csv(stories)
+            send_document(csv, f"stories_{tag}.csv",
+                          caption="📎 Все сторис месяца (для сортировки/разбора)",
+                          **send_kwargs)
         print(f"[run_ig_monthly] Готово → reports/ig_monthly_{tag}.txt")
     except Exception:
         err = traceback.format_exc()

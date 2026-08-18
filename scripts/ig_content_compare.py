@@ -12,6 +12,49 @@ sys.path.insert(0, os.path.dirname(__file__))
 import fetch_ig_weekly as fiw  # noqa: E402
 
 STORE = os.path.join(fiw.DATA_DIR, "ig_stories", "store.json")
+MINSK = dt.timezone(dt.timedelta(hours=3))  # локальное время GoTrips (UTC+3)
+
+
+def _local(ts: str):
+    """UTC-таймстамп API → локальное время (UTC+3)."""
+    try:
+        d = dt.datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(
+            tzinfo=dt.timezone.utc).astimezone(MINSK)
+        return d
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _retention(s):
+    nav = s.get("nav", {})
+    exits = (nav.get("tap_exit") or 0) + (nav.get("swipe_forward") or 0)
+    views = s.get("insights", {}).get("views") or 0
+    if not views or not nav:
+        return None
+    return round((1 - exits / views) * 100)
+
+
+def enrich_stories(stories):
+    """Добавляет к сторис: local_dt, local_date, local_time, num (№ в дне),
+    retention_pct. Нумерация — по локальной дате, по времени публикации."""
+    items = []
+    for s in stories:
+        d = _local(s.get("timestamp", ""))
+        s = dict(s)
+        s["_local_dt"] = d
+        s["local_date"] = d.strftime("%d.%m") if d else "??"
+        s["local_time"] = d.strftime("%H:%M") if d else "??"
+        s["retention_pct"] = _retention(s)
+        items.append(s)
+    # нумерация внутри дня
+    by_day = {}
+    for s in sorted(items, key=lambda x: (x["_local_dt"] or dt.datetime.min.replace(
+            tzinfo=MINSK))):
+        key = s["local_date"]
+        by_day.setdefault(key, 0)
+        by_day[key] += 1
+        s["num"] = by_day[key]
+    return items
 
 
 def stories_in_range(start: dt.date, end: dt.date):
@@ -158,15 +201,61 @@ def render_stories(stories, note: str = "") -> str:
                  f"✖️ закрыли {_f(te)} | ➡️ ушли к др. {_f(sf)}")
         L.append(f"🔒 Удержание: {retention:.0f}% "
                  f"(ушло {_f(exits)} из {_f(views)} просмотров)")
-    # топ-3 сторис по просмотрам
-    top = sorted(stories, key=lambda s: (s.get("insights", {}).get("views") or 0),
-                 reverse=True)[:3]
+    # Детализация для пост-обработки: сторис с ID (дата #№ время)
+    enr = enrich_stories(stories)
+
+    def _story_line(s):
+        ins = s.get("insights", {})
+        r = s.get("retention_pct")
+        rt = f"🔒{r}%" if r is not None else "🔒—"
+        cap = (s.get("caption") or "").replace("\n", " ").strip()[:32]
+        typ = "🎬" if s.get("media_type") == "VIDEO" else "🖼"
+        return (f"  📅{s['local_date']} #{s['num']} ({s['local_time']}) {typ} · "
+                f"👁{_f(ins.get('views') or 0)} {rt} 👤{_f(ins.get('profile_visits') or 0)} "
+                f"➕{_f(ins.get('follows') or 0)}" + (f" · {cap}" if cap else ""))
+
+    top = sorted(enr, key=lambda s: (s.get("insights", {}).get("views") or 0),
+                 reverse=True)[:5]
     if top:
-        L.append("Топ сторис:")
-        for s in top:
-            ins = s.get("insights", {})
-            cap = (s.get("caption") or "").replace("\n", " ").strip()[:40]
-            when = (s.get("timestamp") or "")[:10]
-            L.append(f"  👁{_f(ins.get('views') or 0)} 👤{_f(ins.get('profile_visits') or 0)} "
-                     f"➕{_f(ins.get('follows') or 0)} · {when} {cap}")
+        L.append("🏆 Топ сторис (по просмотрам):")
+        L += [_story_line(s) for s in top]
+
+    # слабое удержание (среди сторис с достаточными просмотрами)
+    with_ret = [s for s in enr if s.get("retention_pct") is not None
+                and (s.get("insights", {}).get("views") or 0) >= 300]
+    weak = sorted(with_ret, key=lambda s: s["retention_pct"])[:3]
+    if weak and len(with_ret) > 3:
+        L.append("⚠️ Слабое удержание (что улучшить):")
+        L += [_story_line(s) for s in weak]
+
+    L.append("ℹ️ ID сторис = дата #номер-за-день (время). Ищи в IG → Архив → тот день.")
     return "\n".join(L)
+
+
+def stories_csv(stories) -> str:
+    """CSV со всеми сторис периода для детальной пост-обработки (Excel-friendly)."""
+    import io
+    import csv
+    enr = enrich_stories(stories)
+    enr.sort(key=lambda s: (s.get("_local_dt") or dt.datetime.min.replace(tzinfo=MINSK)))
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(["Дата", "№", "Время", "Тип", "Просмотры", "Охват", "Удержание_%",
+                "ВизитыПрофиля", "Подписки", "Ответы", "Репосты",
+                "Вперёд", "Назад", "Закрыли", "УшлиКДругим", "Подпись", "Ссылка"])
+    for s in enr:
+        ins = s.get("insights", {})
+        nav = s.get("nav", {})
+        w.writerow([
+            s["local_date"], s["num"], s["local_time"],
+            "видео" if s.get("media_type") == "VIDEO" else "фото",
+            ins.get("views") or 0, ins.get("reach") or 0,
+            s.get("retention_pct") if s.get("retention_pct") is not None else "",
+            ins.get("profile_visits") or 0, ins.get("follows") or 0,
+            ins.get("replies") or 0, ins.get("shares") or 0,
+            nav.get("tap_forward") or 0, nav.get("tap_back") or 0,
+            nav.get("tap_exit") or 0, nav.get("swipe_forward") or 0,
+            (s.get("caption") or "").replace("\n", " ").strip(),
+            s.get("permalink") or "",
+        ])
+    return buf.getvalue()

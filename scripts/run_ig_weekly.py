@@ -75,6 +75,16 @@ def main():
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
         send_message(report, **send_kwargs)
+
+        # CSV со всеми сторис недели для детальной пост-обработки SMM
+        import ig_content_compare as icc
+        from send_telegram import send_document
+        stories = data.get("stories", [])
+        if stories:
+            csv = icc.stories_csv(stories)
+            send_document(csv, f"stories_{date_str}.csv",
+                          caption="📎 Все сторис недели (для сортировки/разбора)",
+                          **send_kwargs)
         print(f"[run_ig_weekly] Готово → reports/ig_weekly_{date_str}.txt")
     except Exception:
         err = traceback.format_exc()
