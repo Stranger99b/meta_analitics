@@ -1,100 +1,123 @@
-# Meta Ads Analytics — Gotrips
+# GoTrips Analytics — Meta Ads · Instagram · Threads
 
-Автоматическая аналитика рекламных кампаний Meta Ads с ежедневным и еженедельным отчётом в Telegram + AI-аудит через Claude.
+Автоматическая аналитика для туристической компании **GoTrips** (@gotrips_by):
+платная реклама Meta Ads **и** органика Instagram/Threads. Отчёты собираются по
+расписанию и отправляются в Telegram — рекламные в личный чат, органические
+(Instagram и Threads) — фирменным **PDF** в группу, тему «Отчет».
 
-## Что делает система
+Данные берутся из Meta Marketing API, Instagram Graph API и Threads API;
+качественные выводы генерирует ИИ (Qwen с фолбэком), вёрстка PDF — reportlab.
 
-- **Ежедневно в 3:00** — выгружает данные за вчера из Meta Marketing API, строит отчёт, запускает AI-аудит, отправляет в Telegram
-- **Резерв в 7:00** — повторный запуск, если в 3:00 что-то пошло не так
-- **Еженедельно в понедельник 4:00** — стратегический отчёт с WoW-сравнением двух недель
+---
 
-## Структура проекта
+## Возможности
+
+### 1. Meta Ads (платная реклама)
+- **Ежедневный** отчёт (03:00): выгрузка за вчера, тренды, детектор выгорания
+  креативов, AI-аудит → Telegram.
+- **Еженедельный** отчёт (Пн 04:00): WoW-сравнение двух недель, стратегические выводы.
+- Мониторинг подписчиков Instagram (снимок по дням).
+
+### 2. Instagram — органика
+- **Недельный** и **месячный** дайджесты в PDF: охваты, просмотры, вовлечённость,
+  прирост подписчиков (WoW / MoM), топ публикаций с кликабельными ссылками, детектор
+  «залетевшего» контента (≥2× среднего).
+- **Аналитика сторис**: ежедневный снимок (API отдаёт только активные <24 ч),
+  метрики просмотров/охвата/визитов профиля/подписок, **разбивка навигации**
+  (вперёд/назад/закрыли/ушли) и метрика **удержания**. У каждой сторис — ID
+  «дата #номер (время)» для поиска в архиве.
+- **Сравнение типов контента** (рилс / посты / сторис) — что эффективнее и сколько
+  какого контента нужно.
+- Вся история сторис заливается в **Google Sheets** (ссылка в отчёте).
+
+### 3. Threads — органика
+- **Недельный** и **месячный** дайджесты в PDF в том же стиле: просмотры, лайки,
+  ответы, репосты, цитирования, прирост подписчиков, топ постов со ссылками.
+
+### AI-выводы
+- Недельные — краткий вывод; месячные — **оценка работы SMM-специалиста** (балл 1–10)
+  и рекомендации по контент-миксу. Движок — Qwen (`qwen-ask --role long`) с
+  ретраем/проверкой полноты и фолбэком.
+
+### Фирменные PDF
+- Салатовый бренд-цвет **#73D700** (с gotrips.by), цветные emoji (Twemoji),
+  кликабельные ссылки на посты/рилс, таблицы для сторис и сравнения типов, номер
+  недели/месяца в шапке и имени файла (напр. `№34_2026_IG_недельный_дайджест.pdf`),
+  вёрстка под мобильный экран. Кириллица — DejaVuSans.
+
+---
+
+## Структура
 
 ```
 meta_analitics/
 ├── scripts/
-│   ├── fetch_meta_ads.py      # Выгрузка данных из Meta API (с retry)
-│   ├── fetch_meta_weekly.py   # Выгрузка данных за две недели
-│   ├── analyze_campaigns.py   # Построение ежедневного отчёта
-│   ├── analyze_weekly.py      # Построение еженедельного отчёта
-│   ├── creative_burnout.py    # Детектор выгорания креативов
-│   ├── ai_audit.py            # AI-аудит через Claude CLI
-│   ├── ig_followers.py        # Мониторинг подписчиков Instagram
-│   ├── send_telegram.py       # Отправка в Telegram
-│   ├── run_daily.py           # Оркестратор ежедневного отчёта
-│   ├── run_weekly.py          # Оркестратор еженедельного отчёта
-│   └── update_token.py        # Обновление Meta Access Token
-├── data/                      # Кэш данных (не в git)
-├── reports/                   # Архив отчётов (не в git)
-├── .env                       # Токены (не в git)
-├── .env.example               # Шаблон переменных окружения
+│   # --- Meta Ads ---
+│   ├── fetch_meta_ads.py / fetch_meta_weekly.py
+│   ├── analyze_campaigns.py / analyze_weekly.py
+│   ├── creative_burnout.py / ai_audit.py / ig_followers.py
+│   ├── run_daily.py / run_weekly.py
+│   # --- Instagram органика ---
+│   ├── fetch_ig_weekly.py / fetch_ig_monthly.py
+│   ├── fetch_ig_stories_daily.py        # снимок сторис (3×/день)
+│   ├── ig_content_compare.py            # сторис + сравнение типов
+│   ├── analyze_ig_weekly.py / analyze_ig_monthly.py
+│   ├── run_ig_weekly.py / run_ig_monthly.py
+│   ├── stories_sheet.py                 # заливка сторис в Google Sheets
+│   # --- Threads органика ---
+│   ├── fetch_threads_weekly.py / fetch_threads_monthly.py
+│   ├── analyze_threads_weekly.py / analyze_threads_monthly.py
+│   ├── run_threads_weekly.py / run_threads_monthly.py
+│   ├── exchange_threads_token.py
+│   # --- Общее ---
+│   ├── report_pdf.py                    # генерация PDF (reportlab)
+│   ├── report_format.py                 # HTML-вёрстка/экранирование
+│   ├── send_telegram.py                 # отправка текста/файлов/PDF
+│   ├── exchange_token.py / update_token.py
+│   └── assets/emoji/                    # Twemoji PNG для PDF
+├── data/        # кэш, база сторис, архивы (не в git)
+├── reports/     # архив отчётов и PDF (не в git)
+├── .env         # токены и ID (не в git)
+├── .env.example
 └── requirements.txt
 ```
 
-## Метрики и стратегия
+## Расписание (cron)
 
-**Стратегия Gotrips (60/40):**
-- **60% бюджета** → кампании "Диалог" — клиент пишет в директ → продажа. Ключевая метрика: диалоги, цена диалога (норма ≤ $3)
-- **40% бюджета** → "Трафик в Профиль" — подписка → сторителлинг → отложенная продажа. Ключевые метрики: CTR, охват, сохранения
+| Отчёт | Когда | Куда |
+|---|---|---|
+| Meta Ads дневной | 03:00 (резерв 07:00) | личный чат |
+| Meta Ads недельный | Пн 04:00 | личный чат |
+| Instagram недельный (PDF) | Пн 10:00 | группа, тема «Отчет» |
+| Threads недельный (PDF) | Пн 10:05 | группа, тема «Отчет» |
+| Instagram месячный (PDF) | 1-го, 10:15 | группа, тема «Отчет» |
+| Threads месячный (PDF) | 1-го, 10:10 | группа, тема «Отчет» |
+| Снимок сторис + Google Sheets | 07:00 / 15:00 / 23:00 | — |
 
-## Что входит в ежедневный отчёт
+Ручной запуск — тот же скрипт напрямую; месячные принимают аргумент `YYYY-MM`
+для перегенерации за конкретный месяц.
 
-- Итого по аккаунту: расход, охват, CTR, CPC, CPM vs 7-дневный средний
-- Количество диалогов и цена диалога
-- Разбивка по кампаниям с трендами (↑↓→)
-- Топ-5 адсетов по расходу
-- Лучшие и худшие объявления по CTR
-- **Детектор выгорания креативов**: сравнение CTR вчера vs 7д avg (🔴 критично / 🟡 внимание)
-- Мониторинг подписчиков Instagram
-- AI-аудит от Claude: диагноз, проблемы, конкретные действия на завтра
+## Настройка
 
-## Что входит в еженедельный отчёт
+Переменные в `.env` (см. `.env.example`):
+- `META_ACCESS_TOKEN` — токен Meta (Instagram Graph + Ads), 60 дней; продлевается
+  `exchange_token.py`. Права: `ads_read`, `business_management`, `instagram_basic`,
+  `instagram_manage_insights`, `pages_read_engagement`, `pages_show_list`.
+- `THREADS_ACCESS_TOKEN` / `THREADS_USER_ID` — отдельный токен Threads API
+  (`exchange_threads_token.py`, права `threads_basic`, `threads_manage_insights`).
+- `META_AD_ACCOUNT_ID`, `META_APP_ID`, `META_APP_SECRET`.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`; `IG_TG_CHAT_ID`/`IG_TG_THREAD_ID` и
+  `THREADS_TG_CHAT_ID`/`THREADS_TG_THREAD_ID` — группа и тема «Отчет».
+- `GSHEETS_CREDENTIALS` — путь к service-account JSON (Google Sheets).
 
-- Сравнение двух недель по всем метрикам с delta-стрелками
-- Топ-6 адсетов, топ-4 и аутсайдеры объявлений
-- Блок тенденций
-- AI стратегический аудит: оценка недели, 3 инсайта, рекомендации на следующую неделю
-
-## Установка
-
-```bash
-git clone https://github.com/Stranger99b/meta_analitics.git
-cd meta_analitics
+```
 pip install -r requirements.txt
-cp .env.example .env
-# Заполнить .env своими токенами
 ```
 
-### Переменные окружения (`.env`)
-
-```
-META_ACCESS_TOKEN=    # Долгоживущий токен Meta (60 дней), получить в Graph API Explorer
-META_AD_ACCOUNT_ID=   # ID рекламного аккаунта (формат: act_XXXXXXXXX)
-TELEGRAM_BOT_TOKEN=   # Токен Telegram-бота
-TELEGRAM_CHAT_ID=     # ID чата для отправки отчётов
-```
-
-### Cron
-
-```cron
-0 3 * * * /usr/bin/python3 /path/to/meta_analitics/scripts/run_daily.py >> /path/to/data/cron.log 2>&1
-0 7 * * * test -f /path/to/meta_analitics/reports/$(date +\%Y-\%m-\%d).txt || /usr/bin/python3 /path/to/meta_analitics/scripts/run_daily.py >> /path/to/data/cron.log 2>&1
-0 4 * * 1 /usr/bin/python3 /path/to/meta_analitics/scripts/run_weekly.py >> /path/to/data/cron_weekly.log 2>&1
-```
-
-## Зависимости
-
-- Python 3.8+
-- `requests` — запросы к Meta API и Telegram
-- `python-dotenv` — загрузка переменных окружения
-- Claude CLI (`claude`) — для AI-аудита
-
-## Обновление токена Meta
-
-Токен Meta действует ~60 дней. Для обновления:
-
-```bash
-python3 scripts/update_token.py НОВЫЙ_ТОКЕН
-```
-
-Скрипт обновит `.env` и проверит валидность токена с датой истечения.
+## Заметки
+- Instagram Stories API отдаёт только активные сторис (<24 ч), поэтому нужен
+  регулярный снимок; метрики растут все 24 ч → снимок 3×/день + dedup по макс.
+  просмотрам.
+- Instagram account insights ограничены окном 30 дней — месячные метрики собираются
+  по частям и суммируются.
+- Threads API отдельный от Facebook/Instagram (свой токен, база `graph.threads.net`).
