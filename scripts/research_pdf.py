@@ -32,17 +32,93 @@ def _b(items):
     return [Paragraph(f"•  {t}", R.ST_BODY) for t in items]
 
 
-def build() -> bytes:
+def _diagnosis_dynamic(data):
+    """Диагноз месяца из реальных данных (формат-лидер, динамика, сторис, темы)."""
+    import ig_content_compare as icc
+    cmp = icc.compare(data.get("content", []), data.get("stories", []))
+    lab = {"REELS": "Reels", "POSTS": "Посты", "STORIES": "Сторис"}
+    best = max(("REELS", "POSTS", "STORIES"),
+               key=lambda t: cmp.get(t, {}).get("views_avg", 0))
+    tm, tp = data.get("totals_month", {}), data.get("totals_prev", {})
+    inter = tm.get("total_interactions") or sum((tm.get(k) or 0)
+            for k in ("likes", "comments", "saves", "shares"))
+    inter_p = tp.get("total_interactions") or sum((tp.get(k) or 0)
+              for k in ("likes", "comments", "saves", "shares"))
+    bl = [
+        f"<b>Формат-лидер:</b> {lab[best]} — ср. {R._f(cmp[best]['views_avg'])} просмотров "
+        f"(Reels {R._f(cmp['REELS']['views_avg'])}, Посты {R._f(cmp['POSTS']['views_avg'])}"
+        + (f", Сторис {R._f(cmp['STORIES']['views_avg'])}" if cmp['STORIES']['count'] else "")
+        + "). Делайте упор на то, что заходит.",
+        f"<b>Динамика к прошлому месяцу:</b> охват {R._f(tm.get('reach'))}"
+        f"{R._trend(tm.get('reach'), tp.get('reach'))}, просмотры"
+        f"{R._trend(tm.get('views'), tp.get('views'))}, вовлечённость"
+        f"{R._trend(inter, inter_p)}.",
+    ]
+    stories = data.get("stories", [])
+    if stories:
+        nav = icc.stories_nav_agg(stories)
+        bl.append(f"<b>Сторис:</b> удержание {nav.get('retention_pct')}%, "
+                  f"подписки со сторис {nav.get('tap_forward') is not None and '' or ''}"
+                  f"{sum((s.get('insights',{}).get('follows') or 0) for s in stories)}.")
+    fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
+    if fg is not None:
+        bl.append(f"<b>Подписчики:</b> +{R._f(fg)} за месяц{R._trend(fg, fgp)}.")
+    content = [c for c in data.get("content", []) if c.get("insights", {}).get("views")]
+    content.sort(key=lambda c: c["insights"]["views"], reverse=True)
+    if content:
+        themes = "; ".join(f"«{R._clean((c.get('caption') or '')[:38])}»"
+                           for c in content[:3])
+        bl.append(f"<b>Что зашло (топ-темы):</b> {themes}.")
+    return [_h2(R.E("chart") + "Диагноз месяца (по вашим данным)")] + _b(bl)
+
+
+def _kpi_suggestions(data):
+    import ig_content_compare as icc
+    import smm_score
+    cmp = icc.compare(data.get("content", []), data.get("stories", []))
+    r = cmp.get("REELS", {}).get("views_avg", 0)
+    p = cmp.get("POSTS", {}).get("views_avg", 0)
+    sug = []
+    if p > r * 1.3 and p:
+        sug.append("Посты/карусели заходят заметно лучше Reels — рассмотрите +1 карусель/нед; "
+                   "Reels пока держите 2, но усильте хуками.")
+    elif r > p * 1.3 and r:
+        sug.append("Reels обгоняют посты по просмотрам — можно поднять норму Reels до 3/нед.")
+    pf = smm_score.plan_vs_fact(data)
+    missed = [x["name"] for x in pf if not x["ok"]]
+    if missed:
+        sug.append("В прошлом месяце недобрано по: " + ", ".join(missed) +
+                   " — подтянуть до нормы.")
+    tm, tp = data.get("totals_month", {}), data.get("totals_prev", {})
+    if (tm.get("saves") or 0) < (tp.get("saves") or 0):
+        sug.append("Сохранения снижаются — добавьте сохраняемый контент (гайды, чек-листы, "
+                   "маршруты) с призывом «сохрани».")
+    if not sug:
+        sug.append("Показатели сбалансированы — держите текущий норматив KPI.")
+    return [_h2(R.E("memo") + "Предложения по KPI (решение за вами)")] + _b(sug)
+
+
+def build(data=None, ai_focus: str = "") -> bytes:
     buf = io.BytesIO()
     PW, PH = 430, 880
+    if data:
+        mon = data["month"]
+        title = f"GoTrips — план на месяц {mon['name']} {mon['year']}"
+        band = (f'{R.E("rocket",15,-3)}<b>ПЛАН SMM НА МЕСЯЦ</b>  ·  '
+                f'{mon["name"].capitalize()} {mon["year"]}')
+        sub = (f"План и KPI для SMM-менеджера · @gotrips_by · обновлён по данным месяца · "
+               f"автобусные и групповые туры")
+    else:
+        title = "GoTrips — стратегия роста SMM"
+        band = f'{R.E("rocket",15,-3)}<b>СТРАТЕГИЯ РОСТА</b>  ·  Instagram + Threads'
+        sub = ("Плейбук для SMM-менеджера · автобусные и групповые туры · "
+               "на основе данных аккаунта @gotrips_by и трендов 2026")
     doc = SimpleDocTemplate(buf, pagesize=(PW, PH), leftMargin=26, rightMargin=26,
-                            topMargin=24, bottomMargin=26,
-                            title="GoTrips — стратегия роста SMM")
+                            topMargin=24, bottomMargin=26, title=title)
     W = PW - 52
-    D = [R._title_band(f'{R.E("rocket",15,-3)}<b>СТРАТЕГИЯ РОСТА</b>  ·  Instagram + Threads', W)]
+    D = [R._title_band(band, W)]
     D.append(Spacer(1, 4))
-    D.append(_cap("Плейбук для SMM-менеджера · автобусные и групповые туры · "
-                  "на основе данных аккаунта @gotrips_by и трендов 2026"))
+    D.append(_cap(sub))
 
     # 0. Норматив KPI (что делать каждую неделю)
     D.append(_h2(R.E("trophy") + "Норматив недели (KPI) — за это начисляется балл"))
@@ -69,22 +145,25 @@ def build() -> bytes:
                   "(≥2× среднего) в месяц. Выполнение норматива ловится в дайджесте "
                   "блоком «План vs Факт» и влияет на балл SMM."))
 
-    # 1. Диагноз
-    D.append(_h2(R.E("chart") + "1. Диагноз аккаунта (по вашим данным)"))
-    D += _b([
-        "<b>Сильная сторона — посты и карусели.</b> У вас посты собирают в среднем "
-        "~50 000 просмотров против ~29 000 у Reels (июль). Это редкость: обычно Reels "
-        "тянут охват сильнее. Значит ваши посты/карусели резонируют, а Reels недокручены.",
-        "<b>Заходит эмоция и локальный юмор.</b> Топ-контент — сезонные и эмоциональные "
-        "посты (конец лета, свадьбы, «осенние туры») и ироничные про направления "
-        "(дагестанский юмор). Люди реагируют на «своё», а не на сухие описания стран.",
-        "<b>Сторис — отличное удержание (~92%), но слабая конверсия.</b> Люди досматривают, "
-        "но мало переходят в профиль и подписываются со сторис — не хватает призывов и ссылок.",
-        "<b>Тревожный сигнал — падает вовлечённость.</b> Сохранения, комментарии и особенно "
-        "репосты снижаются месяц к месяцу. А именно репосты (DM-шеры) — сигнал №1 для алгоритма.",
-        "<b>Reels — точка роста.</b> Сейчас это описательные ролики про направления. Им не "
-        "хватает хука в первые 3 секунды, трендового звука и «шеработельности».",
-    ])
+    # 1. Диагноз — динамический (из данных) или статический-пример
+    if data:
+        D += _diagnosis_dynamic(data)
+        D += _kpi_suggestions(data)
+        if ai_focus:
+            D.append(_h2(R.E("rocket") + "Фокус на следующий месяц"))
+            for para in ai_focus.split("\n"):
+                if para.strip():
+                    D.append(_p(R._esc(para.strip())))
+    else:
+        D.append(_h2(R.E("chart") + "1. Диагноз аккаунта (пример по июлю)"))
+        D += _b([
+            "<b>Сильная сторона — посты и карусели.</b> Посты собирают в среднем "
+            "~50 000 просмотров против ~29 000 у Reels. Значит посты/карусели резонируют.",
+            "<b>Заходит эмоция и локальный юмор</b> — сезонные посты и ирония про направления.",
+            "<b>Сторис — отличное удержание (~92%), но слабая конверсия</b> в профиль/подписки.",
+            "<b>Падает вовлечённость</b> — сохранения/репосты снижаются. Репосты (DM) — сигнал №1.",
+            "<b>Reels — точка роста</b>: не хватает хука в первые 3 секунды и трендового звука.",
+        ])
 
     # 2. Главный вывод — микс
     D.append(_h2(R.E("trophy") + "2. Главный вывод: правильный микс контента"))
