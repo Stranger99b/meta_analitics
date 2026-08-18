@@ -83,6 +83,12 @@ def snapshot():
         json.dump(store, f, ensure_ascii=False, indent=2)
     print(f"[ig_stories] активных сейчас: {len(stories)}, новых: {added}, "
           f"всего в базе: {len(store)}")
+    # заливаем полную историю в Google-таблицу (не критично, если недоступна)
+    try:
+        import stories_sheet
+        stories_sheet.upload()
+    except Exception as e:  # noqa: BLE001
+        print(f"[ig_stories] заливка в Sheets пропущена: {e}")
     return store
 
 

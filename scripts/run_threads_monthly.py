@@ -88,30 +88,28 @@ def main():
     target = sys.argv[1] if len(sys.argv) > 1 else None
     print(f"[run_threads_monthly] Старт месячного отчёта Threads (месяц={target or 'предыдущий'})…")
     try:
-        import report_format as rf
+        import report_pdf as rpdf
+        from send_telegram import send_bytes
+
         data = fetch_and_save(target)
-        report = build_digest(data)
-
         ai_text = qwen_review(build_ai_summary(data))
-        if ai_text:
-            report += "\n\n" + rf.b("🤖 Оценка и рекомендации (AI)") + "\n" + ai_text
 
-        tag = f"{data['month']['year']}-{data['month']['month']:02d}"
+        pdf = rpdf.threads_monthly_pdf(data, ai_text)
+        mon = data["month"]
+        tag = f"{mon['year']}-{mon['month']:02d}"
+        fname = f"№{mon['month']:02d}_{mon['year']}_{mon['name'].capitalize()}_Threads_месячный.pdf"
+        cap = f"📄 Threads · месячный отчёт №{mon['month']:02d} · {mon['name'].capitalize()} {mon['year']}"
+
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
         os.makedirs(reports_dir, exist_ok=True)
-        with open(os.path.join(reports_dir, f"threads_monthly_{tag}.txt"), "w",
-                  encoding="utf-8") as f:
-            f.write(rf.plain(report))
+        with open(os.path.join(reports_dir, f"threads_monthly_{tag}.pdf"), "wb") as f:
+            f.write(pdf)
 
         chat_id = os.environ.get("THREADS_TG_CHAT_ID")
         thread_id = os.environ.get("THREADS_TG_THREAD_ID")
-        send_kwargs = {}
         if chat_id:
-            send_kwargs["chat_id"] = chat_id
-        if thread_id:
-            send_kwargs["message_thread_id"] = thread_id
-        send_message(rf.to_html(report), parse_mode="HTML", **send_kwargs)
-        print(f"[run_threads_monthly] Готово → reports/threads_monthly_{tag}.txt")
+            send_bytes(pdf, fname, chat_id=chat_id, message_thread_id=thread_id, caption=cap)
+        print(f"[run_threads_monthly] Готово → {fname}")
     except Exception:
         err = traceback.format_exc()
         print(f"[run_threads_monthly] ОШИБКА:\n{err}")

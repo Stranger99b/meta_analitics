@@ -50,31 +50,29 @@ def qwen_commentary(summary: str) -> str:
 def main():
     print("[run_threads_weekly] Старт недельного дайджеста Threads…")
     try:
+        import datetime as _dt
+        import report_pdf as rpdf
+        from send_telegram import send_bytes
+
         data = fetch_and_save()
-        report = build_digest(data)
-
-        import report_format as rf
         ai_text = qwen_commentary(build_ai_summary(data))
-        if ai_text:
-            report += "\n\n" + rf.b("🤖 Вывод недели (AI)") + "\n" + ai_text
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        pdf = rpdf.threads_weekly_pdf(data, ai_text)
+        b = _dt.date.fromisoformat(data["week"]["until"])
+        y, w, _ = b.isocalendar()
+        fname = f"№{w}_{y}_Threads_недельный_дайджест.pdf"
+        cap = f"📄 Threads · недельный дайджест №{w} · {y}"
+
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
         os.makedirs(reports_dir, exist_ok=True)
-        with open(os.path.join(reports_dir, f"threads_weekly_{date_str}.txt"), "w",
-                  encoding="utf-8") as f:
-            f.write(rf.plain(report))
+        with open(os.path.join(reports_dir, f"threads_weekly_{y}-W{w:02d}.pdf"), "wb") as f:
+            f.write(pdf)
 
-        # Threads-дайджест идёт в группу Go_контент, тему «Отчет» (не в личный чат)
         chat_id = os.environ.get("THREADS_TG_CHAT_ID")
         thread_id = os.environ.get("THREADS_TG_THREAD_ID")
-        send_kwargs = {}
         if chat_id:
-            send_kwargs["chat_id"] = chat_id
-        if thread_id:
-            send_kwargs["message_thread_id"] = thread_id
-        send_message(rf.to_html(report), parse_mode="HTML", **send_kwargs)
-        print(f"[run_threads_weekly] Готово → reports/threads_weekly_{date_str}.txt")
+            send_bytes(pdf, fname, chat_id=chat_id, message_thread_id=thread_id, caption=cap)
+        print(f"[run_threads_weekly] Готово → {fname}")
     except Exception:
         err = traceback.format_exc()
         print(f"[run_threads_weekly] ОШИБКА:\n{err}")

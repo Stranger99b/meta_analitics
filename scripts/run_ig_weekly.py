@@ -53,40 +53,34 @@ def qwen_commentary(summary: str) -> str:
 def main():
     print("[run_ig_weekly] Старт недельного дайджеста Instagram…")
     try:
-        import report_format as rf
+        import datetime as _dt
+        import report_pdf as rpdf
+        import stories_sheet
+        from send_telegram import send_bytes
+
         data = fetch_and_save()
-        report = build_digest(data)
-
         ai_text = qwen_commentary(build_ai_summary(data))
-        if ai_text:
-            report += "\n\n" + rf.b("🤖 Вывод недели (AI)") + "\n" + ai_text
 
-        date_str = datetime.now().strftime("%Y-%m-%d")
+        # вся статистика сторис → Google-таблица (ссылка попадёт в PDF)
+        sheet_url = stories_sheet.upload()
+
+        pdf = rpdf.ig_weekly_pdf(data, ai_text, sheet_url=sheet_url)
+        b = _dt.date.fromisoformat(data["week"]["until"])
+        y, w, _ = b.isocalendar()
+        fname = f"№{w}_{y}_IG_недельный_дайджест.pdf"
+        cap = f"📄 Instagram · недельный дайджест №{w} · {y}"
+
         reports_dir = os.path.join(os.path.dirname(__file__), "..", "reports")
         os.makedirs(reports_dir, exist_ok=True)
-        with open(os.path.join(reports_dir, f"ig_weekly_{date_str}.txt"), "w",
-                  encoding="utf-8") as f:
-            f.write(rf.plain(report))
+        with open(os.path.join(reports_dir, f"ig_weekly_{y}-W{w:02d}.pdf"), "wb") as f:
+            f.write(pdf)
 
+        # прод: только в тему Go_контент/«Отчет»
         chat_id = os.environ.get("IG_TG_CHAT_ID")
         thread_id = os.environ.get("IG_TG_THREAD_ID")
-        send_kwargs = {}
         if chat_id:
-            send_kwargs["chat_id"] = chat_id
-        if thread_id:
-            send_kwargs["message_thread_id"] = thread_id
-        send_message(rf.to_html(report), parse_mode="HTML", **send_kwargs)
-
-        # CSV со всеми сторис недели для детальной пост-обработки SMM
-        import ig_content_compare as icc
-        from send_telegram import send_document
-        stories = data.get("stories", [])
-        if stories:
-            csv = icc.stories_csv(stories)
-            send_document(csv, f"stories_{date_str}.csv",
-                          caption="📎 Все сторис недели (для сортировки/разбора)",
-                          **send_kwargs)
-        print(f"[run_ig_weekly] Готово → reports/ig_weekly_{date_str}.txt")
+            send_bytes(pdf, fname, chat_id=chat_id, message_thread_id=thread_id, caption=cap)
+        print(f"[run_ig_weekly] Готово → {fname}")
     except Exception:
         err = traceback.format_exc()
         print(f"[run_ig_weekly] ОШИБКА:\n{err}")
