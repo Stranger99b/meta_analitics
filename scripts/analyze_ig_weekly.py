@@ -133,6 +133,9 @@ def build_ai_summary(data) -> str:
         sv = sum((s.get("insights", {}).get("views") or 0) for s in stories)
         sf = sum((s.get("insights", {}).get("follows") or 0) for s in stories)
         pv = sum((s.get("insights", {}).get("profile_visits") or 0) for s in stories)
+        nav = icc.stories_nav_agg(stories)
         parts.append(f"Сторис за период: {len(stories)} шт, просмотры={sv}, "
-                     f"визиты профиля={pv}, подписки={sf}.")
+                     f"визиты профиля={pv}, подписки={sf}, "
+                     f"удержание={nav.get('retention_pct')}% "
+                     f"(закрытий={nav.get('tap_exit')}, свайпов к др.={nav.get('swipe_forward')}).")
     return "\n".join(parts)

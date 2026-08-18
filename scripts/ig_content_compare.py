@@ -48,6 +48,20 @@ def stories_since_earliest():
     return min(dates) if dates else None
 
 
+def stories_nav_agg(stories):
+    """Агрегат навигации сторис + удержание (для AI-сводок)."""
+    def _n(k):
+        return sum((s.get("nav", {}).get(k) or 0) for s in stories)
+    views = sum((s.get("insights", {}).get("views") or 0) for s in stories)
+    tf, tb = _n("tap_forward"), _n("tap_back")
+    te, sf = _n("tap_exit"), _n("swipe_forward")
+    exits = te + sf
+    retention = round((1 - exits / views) * 100) if views else None
+    return {"tap_forward": tf, "tap_back": tb, "tap_exit": te,
+            "swipe_forward": sf, "exits": exits, "views": views,
+            "retention_pct": retention}
+
+
 def _agg(items):
     views = [(i.get("insights", {}).get("views") or 0) for i in items]
     reach = [(i.get("insights", {}).get("reach") or 0) for i in items]
@@ -127,8 +141,23 @@ def render_stories(stories, note: str = "") -> str:
     L.append(f"Сторис: {n} шт | 👁 просмотры {_f(views)} (ср. {_f(round(views/n))}) | "
              f"🎯 охват {_f(reach)}")
     L.append(f"💬 ответы {_f(replies)} | ↗️ репосты {_f(shares)} | "
-             f"🧭 навигация {_f(nav)} | 👤 визиты в профиль {_f(profile_visits)} | "
+             f"👤 визиты в профиль {_f(profile_visits)} | "
              f"➕ подписки {_f(follows)} | Σ взаимодействий {_f(inter)}")
+
+    # Навигация + удержание
+    def _nav(k):
+        return sum((s.get("nav", {}).get(k) or 0) for s in stories)
+    tf, tb = _nav("tap_forward"), _nav("tap_back")
+    te, sf = _nav("tap_exit"), _nav("swipe_forward")
+    nav_total = tf + tb + te + sf
+    if nav_total:
+        exits = te + sf
+        # удержание = доля НЕ ушедших от просмотров (уходы = закрытия + свайпы к др. аккаунтам)
+        retention = (1 - exits / views) * 100 if views else 0
+        L.append(f"🧭 Навигация: ⏭ вперёд {_f(tf)} | ⏮ назад {_f(tb)} | "
+                 f"✖️ закрыли {_f(te)} | ➡️ ушли к др. {_f(sf)}")
+        L.append(f"🔒 Удержание: {retention:.0f}% "
+                 f"(ушло {_f(exits)} из {_f(views)} просмотров)")
     # топ-3 сторис по просмотрам
     top = sorted(stories, key=lambda s: (s.get("insights", {}).get("views") or 0),
                  reverse=True)[:3]

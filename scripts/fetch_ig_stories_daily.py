@@ -34,6 +34,21 @@ def _story_insights(sid):
         return {}
 
 
+def _nav_breakdown(sid):
+    """Разбивка навигации: tap_forward/tap_back/tap_exit/swipe_forward.
+
+    Отдаётся только при достаточном числе зрителей — иначе пустой dict.
+    """
+    try:
+        d = fiw._get(f"{sid}/insights", {
+            "metric": "navigation",
+            "breakdown": "story_navigation_action_type"})
+        res = d["data"][0]["total_value"]["breakdowns"][0]["results"]
+        return {r["dimension_values"][0]: r["value"] for r in res}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _load_store():
     if os.path.exists(STORE):
         with open(STORE, encoding="utf-8") as f:
@@ -61,7 +76,8 @@ def snapshot():
             "id": sid, "media_type": s.get("media_type"),
             "timestamp": s.get("timestamp"), "permalink": s.get("permalink"),
             "caption": (s.get("caption") or "")[:80],
-            "insights": ins, "captured": dt.datetime.now().isoformat(),
+            "insights": ins, "nav": _nav_breakdown(sid),
+            "captured": dt.datetime.now().isoformat(),
         }
     with open(STORE, "w", encoding="utf-8") as f:
         json.dump(store, f, ensure_ascii=False, indent=2)
