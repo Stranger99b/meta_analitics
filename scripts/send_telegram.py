@@ -64,14 +64,19 @@ def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str | None = Non
 
 def send_document(content: str, filename: str, chat_id: str = CHAT_ID,
                   caption: str | None = None,
-                  message_thread_id: int | str | None = None):
-    """Отправляет текстовый файл (напр. CSV) как документ в чат/тему."""
+                  message_thread_id: int | str | None = None,
+                  mime: str = "text/csv", bom: bool = True,
+                  parse_mode: str | None = None):
+    """Отправляет текстовый файл (CSV/Markdown/…) как документ в чат/тему."""
     data = {"chat_id": chat_id}
     if caption:
         data["caption"] = caption
+    if parse_mode:
+        data["parse_mode"] = parse_mode
     if message_thread_id:
         data["message_thread_id"] = message_thread_id
-    files = {"document": (filename, content.encode("utf-8-sig"), "text/csv")}
+    enc = content.encode("utf-8-sig" if bom else "utf-8")
+    files = {"document": (filename, enc, mime)}
     r = requests.post(f"{API_URL}/sendDocument", data=data, files=files, timeout=60)
     r.raise_for_status()
     print(f"[telegram] Sent document {filename}")
