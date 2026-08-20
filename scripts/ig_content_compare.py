@@ -194,6 +194,8 @@ def render_stories(stories, note: str = "") -> str:
         out = [head, metr]
         if cap:
             out.append(f"    «{cap}»")
+        if s.get("permalink"):
+            out.append(f"    {s['permalink']}")
         return out
 
     top = sorted(enr, key=lambda s: (s.get("insights", {}).get("views") or 0),
@@ -204,17 +206,26 @@ def render_stories(stories, note: str = "") -> str:
         for i, s in enumerate(top, 1):
             L += _story_lines(s, i)
 
-    with_ret = [s for s in enr if s.get("retention_pct") is not None
-                and (s.get("insights", {}).get("views") or 0) >= 300]
-    weak = sorted(with_ret, key=lambda s: s["retention_pct"])[:3]
-    if weak and len(with_ret) > 3:
+    # реально слабые: удержание НИЖЕ нормы 80% (при достаточных просмотрах)
+    weak = sorted([s for s in enr if s.get("retention_pct") is not None
+                   and s["retention_pct"] < 80
+                   and (s.get("insights", {}).get("views") or 0) >= 300],
+                  key=lambda s: s["retention_pct"])[:3]
+    if weak:
         L.append("")
-        L.append(rf.b("⚠️ Слабое удержание — что улучшить"))
+        L.append(rf.b("⚠️ Слабое удержание (ниже 80%) — что улучшить"))
         for i, s in enumerate(weak, 1):
             L += _story_lines(s, i)
 
     L.append("")
+    L.append("ℹ️ Удержание: 90%+ отлично · 80–90% норма · ниже 80% слабо.")
     L.append("ℹ️ ID сторис = дата #номер (время). Найти: IG → Архив → тот день.")
+    L.append("")
+    L.append(rf.b("Обозначения"))
+    L.append("👁 просмотры · 🎯 охват · 👤 визиты профиля · ➕ подписки")
+    L.append("💬 ответы · ↗️ репосты · 🔒 удержание аудитории")
+    L.append("🧭 навигация: ⏭ вперёд · ⏮ назад · ✖️ закрыли · ➡️ ушли к др.")
+    L.append("🎬 видео · 🖼 фото · 🔒 удержание = сколько людей не ушло")
     return "\n".join(L)
 
 
