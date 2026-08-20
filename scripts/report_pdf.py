@@ -264,12 +264,13 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
         D.append(Spacer(1, 4))
         D.append(Paragraph(E("trophy", 11) + "Топ сторис — по просмотрам", ST_CAP))
         D.append(_stories_table(_story_rows(top), W))
-        with_ret = [s for s in enr if s.get("retention_pct") is not None
-                    and (s.get("insights", {}).get("views") or 0) >= 300]
-        weak = sorted(with_ret, key=lambda s: s["retention_pct"])[:3]
-        if weak and len(with_ret) > 3:
+        weak = sorted([s for s in enr if s.get("retention_pct") is not None
+                       and s["retention_pct"] < 80
+                       and (s.get("insights", {}).get("views") or 0) >= 300],
+                      key=lambda s: s["retention_pct"])[:3]
+        if weak:
             D.append(Spacer(1, 4))
-            D.append(Paragraph(E("warn", 11) + "Слабое удержание — что улучшить", ST_CAP))
+            D.append(Paragraph(E("warn", 11) + "Слабое удержание (ниже 80%)", ST_CAP))
             D.append(_stories_table(_story_rows(weak), W))
         D.append(Spacer(1, 3))
         if sheet_url:
@@ -382,12 +383,13 @@ def _stories_block(stories, W, sheet_url=""):
     out.append(Spacer(1, 4))
     out.append(Paragraph(E("trophy", 11) + "Топ сторис — по просмотрам", ST_CAP))
     out.append(_stories_table(_story_rows(top), W))
-    with_ret = [s for s in enr if s.get("retention_pct") is not None
-                and (s.get("insights", {}).get("views") or 0) >= 300]
-    weak = sorted(with_ret, key=lambda s: s["retention_pct"])[:3]
-    if weak and len(with_ret) > 3:
+    weak = sorted([s for s in enr if s.get("retention_pct") is not None
+                   and s["retention_pct"] < 80
+                   and (s.get("insights", {}).get("views") or 0) >= 300],
+                  key=lambda s: s["retention_pct"])[:3]
+    if weak:
         out.append(Spacer(1, 4))
-        out.append(Paragraph(E("warn", 11) + "Слабое удержание — что улучшить", ST_CAP))
+        out.append(Paragraph(E("warn", 11) + "Слабое удержание (ниже 80%)", ST_CAP))
         out.append(_stories_table(_story_rows(weak), W))
     out.append(Spacer(1, 3))
     if sheet_url:
