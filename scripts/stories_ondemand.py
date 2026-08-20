@@ -9,6 +9,7 @@
 упоминания доставляются.
 """
 import os
+import re
 import sys
 import fcntl
 import datetime as dt
@@ -59,8 +60,36 @@ STORY_KW = ("сторис", "стори", "истори", "stories", "story")   
 INTENT_KW = ("анализ", "разбер", "разбор", "отчет", "отчёт", "статист", "провер")
 
 HINT = ("Чтобы разобрать сторис — напишите мне со словом «сторис», например:\n"
-        "«@tor39_bot проанализируй сторис» или «@tor39_bot сторис за вчера».\n"
-        "По умолчанию беру вчерашние (они уже дозрели по охвату); «сегодня» — за сегодня.")
+        "«@tor39_bot проанализируй сторис» — за вчера (по умолчанию),\n"
+        "«@tor39_bot сторис за сегодня» — за сегодня,\n"
+        "«@tor39_bot сторис 18.08» или «сторис за 18.08.2026» — за конкретный день.")
+
+_DATE_RE = re.compile(r'(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?')
+
+
+def _parse_day(text):
+    """Дата из текста команды: сегодня / вчера / DD.MM[.YYYY]. По умолчанию — вчера."""
+    if "сегодня" in text:
+        return dt.date.today()
+    m = _DATE_RE.search(text)
+    if m:
+        d, mo = int(m.group(1)), int(m.group(2))
+        today = dt.date.today()
+        y = int(m.group(3)) if m.group(3) else today.year
+        if y < 100:
+            y += 2000
+        try:
+            day = dt.date(y, mo, d)
+        except ValueError:
+            return today - dt.timedelta(days=1)
+        # без явного года и дата в будущем → значит прошлый год
+        if not m.group(3) and day > today:
+            try:
+                day = day.replace(year=y - 1)
+            except ValueError:
+                pass
+        return day
+    return dt.date.today() - dt.timedelta(days=1)
 
 
 def _addressed(m):
@@ -85,7 +114,7 @@ def _handle(m):
 
     if any(k in text for k in STORY_KW):
         send_message("⏳ Обрабатываю…", **kw)
-        day = dt.date.today() if "сегодня" in text else dt.date.today() - dt.timedelta(days=1)
+        day = _parse_day(text)
         send_message(rf.to_html(_report(day)), parse_mode="HTML", **kw)
         print(f"[stories_ondemand] ответил в chat {chat} за {day}")
     elif any(k in text for k in INTENT_KW):
