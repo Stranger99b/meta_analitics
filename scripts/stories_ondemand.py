@@ -55,26 +55,42 @@ def _report(day):
 
 
 MAX_AGE = 600  # не отвечать на сообщения старше 10 минут (защита от бэклога)
+STORY_KW = ("сторис", "стори", "истори", "stories", "story")   # варианты слова
+INTENT_KW = ("анализ", "разбер", "разбор", "отчет", "отчёт", "статист", "провер")
+
+HINT = ("Чтобы разобрать сторис — напишите мне со словом «сторис», например:\n"
+        "«@tor39_bot проанализируй сторис» или «@tor39_bot сторис за вчера».\n"
+        "По умолчанию беру вчерашние (они уже дозрели по охвату); «сегодня» — за сегодня.")
+
+
+def _addressed(m):
+    text = (m.get("text") or "").lower()
+    if "@" + BOT_USERNAME in text:
+        return True
+    r = m.get("reply_to_message") or {}
+    return (r.get("from") or {}).get("username", "").lower() == BOT_USERNAME
 
 
 def _handle(m):
-    text = (m.get("text") or "").lower()
-    if BOT_USERNAME not in text or "сторис" not in text:
-        return
     import time
+    if not _addressed(m):
+        return
     if m.get("date") and time.time() - m["date"] > MAX_AGE:
-        return  # старое сообщение — игнор
+        return
+    text = (m.get("text") or "").lower()
     chat = m["chat"]["id"]
-    thread = m.get("message_thread_id")
     kw = {"chat_id": str(chat)}
-    if thread:
-        kw["message_thread_id"] = thread
-    send_message("⏳ Обрабатываю…", **kw)
-    # по умолчанию — вчера; если явно «сегодня» — сегодня (может быть не дозревшим)
-    day = dt.date.today() if "сегодня" in text else dt.date.today() - dt.timedelta(days=1)
-    report = _report(day)
-    send_message(rf.to_html(report), parse_mode="HTML", **kw)
-    print(f"[stories_ondemand] ответил в chat {chat} за {day}")
+    if m.get("message_thread_id"):
+        kw["message_thread_id"] = m["message_thread_id"]
+
+    if any(k in text for k in STORY_KW):
+        send_message("⏳ Обрабатываю…", **kw)
+        day = dt.date.today() if "сегодня" in text else dt.date.today() - dt.timedelta(days=1)
+        send_message(rf.to_html(_report(day)), parse_mode="HTML", **kw)
+        print(f"[stories_ondemand] ответил в chat {chat} за {day}")
+    elif any(k in text for k in INTENT_KW):
+        send_message(HINT, **kw)  # обратился, но не про сторис — подсказка
+        print(f"[stories_ondemand] отправил подсказку в chat {chat}")
 
 
 def _stash_media(m):
