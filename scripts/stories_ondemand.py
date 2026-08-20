@@ -51,7 +51,7 @@ def _report(day):
     if not stories:
         return head + "\n\nЗа этот день сторис в базе нет (сбор идёт 3×/день; " \
                "возможно, ещё не попали или день слишком старый)."
-    return head + "\n\n" + icc.render_stories(stories, "")
+    return head + "\n\n" + icc.render_stories(stories, "", full=True)
 
 
 MAX_AGE = 600  # не отвечать на сообщения старше 10 минут (защита от бэклога)

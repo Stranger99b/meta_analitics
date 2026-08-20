@@ -152,8 +152,9 @@ def render_compare(cmp: dict, stories_note: str = "") -> str:
     return "\n".join(L)
 
 
-def render_stories(stories, note: str = "") -> str:
-    """Блок аналитики сторис (чистая вёрстка)."""
+def render_stories(stories, note: str = "", full: bool = False) -> str:
+    """Блок аналитики сторис (чистая вёрстка). full=True — добавить полный
+    список всех сторис по порядку (для on-demand разбора за день)."""
     _f = rf.fmt
     head = "📸 Сторис" + (f"  ·  {note}" if note else "")
     L = [rf.b(head)]
@@ -216,6 +217,18 @@ def render_stories(stories, note: str = "") -> str:
         L.append(rf.b("⚠️ Слабое удержание (ниже 80%) — что улучшить"))
         for i, s in enumerate(weak, 1):
             L += _story_lines(s, i)
+
+    if full:
+        L.append("")
+        L.append(rf.b(f"📋 Все сторис по порядку ({len(enr)})"))
+        for s in sorted(enr, key=lambda x: x["num"]):
+            ins = s.get("insights", {})
+            r = s.get("retention_pct")
+            rt = f"🔒 {r}%" if r is not None else "🔒 —"
+            typ = "🎬" if s.get("media_type") == "VIDEO" else "🖼"
+            L.append(f"#{s['num']} {s['local_time']} {typ} · "
+                     f"👁 {_f(ins.get('views') or 0)} · {rt} · "
+                     f"👤 {_f(ins.get('profile_visits') or 0)} · ➕ {_f(ins.get('follows') or 0)}")
 
     L.append("")
     L.append("ℹ️ Удержание: 90%+ отлично · 80–90% норма · ниже 80% слабо.")
