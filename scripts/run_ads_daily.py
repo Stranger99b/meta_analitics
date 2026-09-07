@@ -107,6 +107,8 @@ def collect(day: dt.date) -> dict:
             if "messag" in a:
                 msg_actions[a] += v
 
+    clicks_base = int(_sum(camps_base, "clicks"))
+
     return {
         "day": day.isoformat(),
         "spend": _sum(camps_day, "spend"),
@@ -121,6 +123,12 @@ def collect(day: dt.date) -> dict:
             "spend_per_day": _sum(camps_base, "spend") / 7,
             "leads_per_day": len(leads_base) / 7,
             "organic_per_day": clients_base["organic"] / 7,
+            "clicks": clicks_base,
+            # Клик по «написать в директ» — это уже заявленное намерение. Доля
+            # кликов, дошедших до диалога, ловит поломку связки Instagram→Salebot
+            # там, где расход и CTR ещё выглядят нормально. Именно этот показатель
+            # вскрыл обвал 22-24.08.2026: 4-6 на 100 кликов → 1.1.
+            "leads_per_100_clicks": (100 * len(leads_base) / clicks_base) if clicks_base else 0,
             "by_campaign_spend": spend_by_campaign(camps_base),
             "by_campaign_leads": sl.group_by_campaign(leads_base),
         },
@@ -142,6 +150,13 @@ def _alerts(d: dict) -> list[str]:
     elif cpl and cpl_base and cpl > cpl_base * CPL_SPIKE_RATIO:
         out.append(f"CPL {_money(cpl)} — в {cpl / cpl_base:.1f}× дороже нормы "
                    f"({_money(cpl_base)}).")
+
+    l100 = 100 * d["leads"] / d["clicks"] if d["clicks"] else 0
+    l100_base = b["leads_per_100_clicks"]
+    if d["clicks"] >= 200 and l100_base >= 1 and l100 < l100_base * 0.5:
+        out.append(f"Из 100 кликов доходит до диалога {l100:.1f} против нормы "
+                   f"{l100_base:.1f} — клики есть, диалогов нет. Проверить связку "
+                   f"Instagram→Salebot, а не креативы.")
 
     if b["leads_per_day"] >= 3 and d["leads"] < b["leads_per_day"] * 0.5:
         out.append(f"Лидов {d['leads']} против нормы {b['leads_per_day']:.1f}/день "
@@ -180,6 +195,9 @@ def render(d: dict) -> str:
     L.append(f"<i>норма за 7 дней ({b['from'][8:10]}.{b['from'][5:7]}–{b['to'][8:10]}.{b['to'][5:7]}): "
              f"{_money(b['spend_per_day'])}/день · {b['leads_per_day']:.1f} лид./день · "
              f"CPL {_money(cpl_base) if cpl_base else '—'}</i>")
+    l100 = 100 * d["leads"] / d["clicks"] if d["clicks"] else 0
+    L.append(f"🖱 Из 100 кликов в диалог: <b>{l100:.1f}</b> "
+             f"<i>(норма {b['leads_per_100_clicks']:.1f})</i>")
     L.append(f"🌱 Органика: <b>{d['clients']['organic']}</b> "
              f"<i>(норма {b['organic_per_day']:.1f}/день)</i>")
 
