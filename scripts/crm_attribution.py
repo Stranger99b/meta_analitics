@@ -1,238 +1,233 @@
 """
-Сквозная атрибуция: Meta Ads spend → CRM-воронка Salebot.
+Сквозная атрибуция: расход Meta Ads → лиды и воронка в Salebot/CRM.
 
-Логика:
-  - Из Salebot-выгрузок берём ВСЕ диалоги с instagram_ads_data
-  - Группируем по номеру кампании (№XXX из ad_title)
-  - Джойним с расходами из latest.json (7д окно)
-  - Показываем: расход Meta, диалогов Meta vs CRM, воронку до оплаты, реальный CPD
+Переписано 07.09.2026. Что изменилось и почему:
+  - Источник расхода: `data/latest_weekly.json` (обновляется недельным cron)
+    вместо `data/latest.json` — тот заморожен с 15.06, потому что дневной cron
+    Meta отключён.
+  - «Начатые переписки» больше НЕ берутся из Meta: с ~23.08.2026 API перестал
+    отдавать `onsite_conversion.messaging_conversation_started_7d` и соседние
+    метрики переписок (ограничения на выдачу данных). Знаменатель для CPL —
+    лиды из Salebot по метке `instagram_ads_data` (модуль salebot_leads).
+  - Лиды считаются строго за окно недели, а не «за всю историю выгрузок»
+    (старая версия читала все 147 дампов, ~1.7 ГБ, и сравнивала их с расходом
+    за 7 дней — цифры были несопоставимы).
 """
 
-import json
-import glob
 import os
-import re
+import json
+import datetime as dt
+import html as _html
 from collections import defaultdict
 
-SALEBOT_ROOT = "/home/user/salebot_dialog"
-META_LATEST  = os.path.join(os.path.dirname(__file__), "..", "data", "latest.json")
+import salebot_leads as sl
 
-# CRM state IDs (дублируем здесь чтобы не зависеть от другого проекта)
-_BRON      = 66848694
-_TU_PAID   = 66877873
-_PAID      = 66848718
-_CANCEL    = 66848695
-_IGNORE    = 66848739
-_WORK      = 66848693
-_COMPLETED = 66848746
+DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+META_WEEKLY = os.path.join(DATA_DIR, "latest_weekly.json")
 
-_RE_NUM = re.compile(r'№(\d+)')
-
-
-def _extract_num(title: str) -> str | None:
-    m = _RE_NUM.search(title or "")
-    return m.group(1) if m else None
+# Метрики переписок, которые Meta отдавала до ~23.08.2026.
+MESSAGING_ACTIONS = (
+    "onsite_conversion.messaging_conversation_started_7d",
+    "onsite_conversion.messaging_conversation_replied_7d",
+    "onsite_conversion.messaging_first_reply",
+    "onsite_conversion.total_messaging_connection",
+)
 
 
-def _load_meta_spend() -> dict[str, dict]:
-    """Возвращает {campaign_num: {spend, dialogs_meta, name}} из latest.json (7д)."""
+def _actions(row: dict) -> dict[str, int]:
+    out = {}
+    for a in row.get("actions") or []:
+        try:
+            out[a["action_type"]] = int(float(a["value"]))
+        except Exception:
+            continue
+    return out
+
+
+def meta_messaging_status(rows: list[dict]) -> dict:
+    """Сколько переписок Meta ещё отдаёт. Нужен, чтобы заметить возврат метрики."""
+    totals = {a: 0 for a in MESSAGING_ACTIONS}
+    for r in rows:
+        acts = _actions(r)
+        for a in MESSAGING_ACTIONS:
+            totals[a] += acts.get(a, 0)
+    started = totals["onsite_conversion.messaging_conversation_started_7d"]
+    return {
+        "totals": totals,
+        "started": started,
+        "alive": started > 0,
+    }
+
+
+def load_meta_weekly() -> dict | None:
     try:
-        d = json.load(open(META_LATEST, encoding="utf-8"))
+        return json.load(open(META_WEEKLY, encoding="utf-8"))
     except Exception:
-        return {}
+        return None
 
-    result = {}
-    for c in d.get("insights_7d", []):
-        num = _extract_num(c.get("campaign_name", ""))
+
+def spend_by_campaign(rows: list[dict]) -> dict[str, dict]:
+    """{campaign_num: {spend, impressions, clicks, name}} — суммируем по номеру №XXX."""
+    out = defaultdict(lambda: {"spend": 0.0, "impressions": 0, "clicks": 0, "name": ""})
+    for r in rows:
+        num = sl.campaign_num(r.get("campaign_name") or "")
         if not num:
             continue
-        dialogs_meta = next(
-            (int(a["value"]) for a in (c.get("actions") or [])
-             if a["action_type"] == "onsite_conversion.total_messaging_connection"),
-            0,
-        )
-        result[num] = {
-            "spend":        float(c.get("spend", 0)),
-            "dialogs_meta": dialogs_meta,
-            "name":         c.get("campaign_name", ""),
-            "objective":    c.get("objective", ""),
-        }
-    return result
+        o = out[num]
+        o["spend"] += float(r.get("spend") or 0)
+        o["impressions"] += int(r.get("impressions") or 0)
+        o["clicks"] += int(r.get("clicks") or 0)
+        if not o["name"]:
+            o["name"] = r.get("campaign_name") or ""
+    return dict(out)
 
 
-def _load_crm_stats() -> dict[str, dict]:
-    """
-    Читает ВСЕ Salebot-выгрузки, дедуплицирует клиентов (последняя запись),
-    возвращает {campaign_num: {dialogs, bron, tu_paid, paid, cancel, ignore, work, other, title}}.
-    """
-    all_files = sorted(glob.glob(os.path.join(SALEBOT_ROOT, "*/dialogs_*.json")))
-    latest_by_client = {}  # client_id → последняя запись
-    for fpath in all_files:
-        try:
-            records = json.load(open(fpath, encoding="utf-8"))
-        except Exception:
-            continue
-        for d in records:
-            cid = d.get("client_id")
-            if cid is None:
-                continue
-            ads_raw = d.get("instagram_ads_data") or ""
-            if not ads_raw or ads_raw in ("-", "None", "null", "{}"):
-                continue
-            # Сохраняем — более поздний файл перезапишет
-            latest_by_client[cid] = d
-
-    stats = defaultdict(lambda: {
-        "dialogs": 0, "bron": 0, "tu_paid": 0, "paid": 0,
-        "cancel": 0, "ignore": 0, "work": 0, "other": 0, "title": "",
-    })
-
-    for d in latest_by_client.values():
-        ads_raw = d.get("instagram_ads_data") or ""
-        try:
-            ads = json.loads(ads_raw) if isinstance(ads_raw, str) else ads_raw
-            title = ads.get("ad_title", "")
-        except Exception:
-            continue
-
-        num = _extract_num(title)
-        if not num:
-            continue
-
-        sid = d.get("deal_state_id")
-        s = stats[num]
-        s["dialogs"] += 1
-        if not s["title"]:
-            s["title"] = title
-
-        if sid == _WORK:      s["work"]    += 1
-        elif sid == _BRON:    s["bron"]    += 1
-        elif sid == _TU_PAID: s["tu_paid"] += 1
-        elif sid == _PAID:    s["paid"]    += 1
-        elif sid == _CANCEL:  s["cancel"]  += 1
-        elif sid == _IGNORE:  s["ignore"]  += 1
-        else:                 s["other"]   += 1
-
-    return dict(stats)
-
-
-def _short_name(title: str) -> str:
-    """'№358. 06.05.26. Диалог. Питер+Карелия из Минска с 17.04. Широкая. Рилс'
-    → 'Питер+Карелия из Минска с 17.04'"""
-    parts = title.split(". ")
-    # parts[0]=№XXX, parts[1]=дата, parts[2]=тип, parts[3]=описание...
-    if len(parts) >= 4:
-        return parts[3]
-    return title[:50]
+def _fmt_money(v: float) -> str:
+    return f"${v:,.0f}".replace(",", " ")
 
 
 def build_attribution() -> tuple[str, str]:
     """
-    Возвращает (telegram_block, ai_summary).
+    Возвращает (telegram_block_html, ai_summary_plain) за последнюю полную неделю
+    из latest_weekly.json, с сравнением с предыдущей неделей.
     """
-    meta  = _load_meta_spend()
-    crm   = _load_crm_stats()
-
-    # Объединяем все номера кампаний из обоих источников
-    all_nums = sorted(set(meta.keys()) | set(crm.keys()),
-                      key=lambda n: -(crm.get(n, {}).get("dialogs", 0)))
-
-    # Фильтруем: только те, что есть в CRM (иначе нет смысла — нет данных)
-    # Для трафиковых кампаний (нет диалогов) тоже не показываем
-    rows = []
-    for num in all_nums:
-        c = crm.get(num, {})
-        m = meta.get(num, {})
-        if c.get("dialogs", 0) == 0:
-            continue
-        # Пропускаем явно трафиковые (нет dialogs_meta И нет бронь/оплат)
-        conv = c.get("bron", 0) + c.get("tu_paid", 0) + c.get("paid", 0)
-        if not m and conv == 0 and c.get("dialogs", 0) < 3:
-            continue
-        rows.append((num, c, m))
-
-    if not rows:
+    meta = load_meta_weekly()
+    if not meta:
         return "", ""
 
-    # Находим диапазон дат Salebot
-    all_files = sorted(glob.glob(os.path.join(SALEBOT_ROOT, "*/dialogs_*.json")))
-    date_from = all_files[0].split("/")[-2] if all_files else "?"
-    date_to   = all_files[-1].split("/")[-2] if all_files else "?"
+    w1 = meta.get("week1") or {}
+    w2 = meta.get("week2") or {}
+    if not w1.get("since"):
+        return "", ""
 
-    lines = [f"📊 <b>Атрибуция: Meta → CRM</b>  ({date_from} — {date_to})\n"]
-    lines.append("Диалоги из рекламы, их статус в CRM и стоимость:\n")
+    d1_from, d1_to = dt.date.fromisoformat(w1["since"]), dt.date.fromisoformat(w1["until"])
+    sp1 = spend_by_campaign(meta.get("w1_campaigns") or [])
+    leads1 = sl.load_leads(d1_from, d1_to)
+    f1 = sl.group_by_campaign(leads1)
 
-    total_spend = 0.0
-    total_crm_dialogs = 0
-    total_conv = 0
+    have_prev = bool(w2.get("since"))
+    if have_prev:
+        d2_from, d2_to = dt.date.fromisoformat(w2["since"]), dt.date.fromisoformat(w2["until"])
+        sp2 = spend_by_campaign(meta.get("w2_campaigns") or [])
+        f2 = sl.group_by_campaign(sl.load_leads(d2_from, d2_to))
+    else:
+        sp2, f2 = {}, {}
 
-    for num, c, m in rows:
-        spend        = m.get("spend", 0.0)
-        dialogs_meta = m.get("dialogs_meta", 0)
-        dialogs_crm  = c["dialogs"]
-        conv         = c["bron"] + c["tu_paid"] + c["paid"]
-        conv_pct     = round(conv / dialogs_crm * 100, 1) if dialogs_crm else 0
-        cpd_real     = round(spend / dialogs_crm, 1) if dialogs_crm and spend else None
-        cpd_meta     = round(spend / dialogs_meta, 1) if dialogs_meta and spend else None
+    status = meta_messaging_status((meta.get("w1_campaigns") or []))
+    _, missing = sl.dump_days_present(d1_from, d1_to)
 
-        # Название
-        title_src = c.get("title") or m.get("name", "")
-        name = _short_name(title_src) if title_src else f"кампания №{num}"
+    # Прошлую неделю тоже включаем в перебор — иначе остановленная кампания
+    # нигде не всплывёт и падение лидов будет выглядеть беспричинным.
+    nums = sorted(set(sp1) | set(f1) | set(sp2) | set(f2),
+                  key=lambda n: -sp1.get(n, {}).get("spend", 0))
 
-        total_spend        += spend
-        total_crm_dialogs  += dialogs_crm
-        total_conv         += conv
+    L = [f"📊 <b>Атрибуция: расход Meta → лиды Salebot</b>",
+         f"Неделя {d1_from.strftime('%d.%m')}–{d1_to.strftime('%d.%m')}"
+         + (f" (пред. {d2_from.strftime('%d.%m')}–{d2_to.strftime('%d.%m')})" if have_prev else ""),
+         ""]
 
-        lines.append(f"<b>№{num} — {name}</b>")
+    if not status["alive"]:
+        L.append("⚠️ Meta не отдаёт «начатые переписки» — лиды считаем по метке "
+                 "<code>instagram_ads_data</code> в Salebot.")
+        L.append("")
 
-        # Строка расхода и CPD
-        if spend:
-            cpd_str = f"CPD реальный: <b>${cpd_real}</b>"
-            if cpd_meta and cpd_meta != cpd_real:
-                cpd_str += f" (Meta считает: ${cpd_meta})"
-            lines.append(f"  💸 Расход 7д: ${spend:.0f}  |  {cpd_str}")
+    tot_s1, tot_l1, tot_c1 = 0.0, 0, 0
+    # Итоги прошлой недели считаем по ВСЕМ её кампаниям, а не только по тем, что
+    # крутятся сейчас: иначе остановленная кампания молча выпадает из сравнения.
+    tot_s2 = sum(v["spend"] for v in sp2.values())
+    tot_l2 = sum(v["leads"] for v in f2.values())
+    stopped = []
 
-        # Строка диалогов
-        dial_str = f"  💬 Диалогов в CRM: <b>{dialogs_crm}</b>"
-        if dialogs_meta:
-            dial_str += f"  (Meta API: {dialogs_meta})"
-        lines.append(dial_str)
+    for num in nums:
+        s1 = sp1.get(num, {}).get("spend", 0.0)
+        fu1 = f1.get(num) or sl._blank_funnel()
+        l1 = fu1["leads"]
+        if s1 == 0 and l1 == 0:
+            if (f2.get(num) or {}).get("leads", 0) or sp2.get(num, {}).get("spend", 0):
+                stopped.append(num)
+            continue
 
-        # Воронка
-        funnel_parts = []
-        if c["work"]:    funnel_parts.append(f"🔄 работаем: {c['work']}")
-        if conv:         funnel_parts.append(f"✅ бронь/оплата: {conv} ({conv_pct}%)")
-        if c["cancel"]:  funnel_parts.append(f"❌ отмена: {c['cancel']}")
-        if c["ignore"]:  funnel_parts.append(f"👻 игнор: {c['ignore']}")
-        if funnel_parts:
-            lines.append("  " + "  |  ".join(funnel_parts))
+        s2 = sp2.get(num, {}).get("spend", 0.0)
+        l2 = (f2.get(num) or {}).get("leads", 0)
+        tot_s1 += s1; tot_l1 += l1; tot_c1 += sl.conversions(fu1)
 
-        lines.append("")
+        title = fu1["title"] or sp1.get(num, {}).get("name", "")
+        name = sl.short_name(title) or f"кампания №{num}"
+        cpl1 = s1 / l1 if l1 else None
+        cpl2 = s2 / l2 if l2 else None
 
-    # Итого
-    total_cpd = round(total_spend / total_crm_dialogs, 1) if total_crm_dialogs and total_spend else None
-    total_conv_pct = round(total_conv / total_crm_dialogs * 100, 1) if total_crm_dialogs else 0
-    lines.append(f"<b>Итого:</b> расход 7д ${total_spend:.0f}  |  диалогов в CRM {total_crm_dialogs}  |  "
-                 f"конверсий {total_conv} ({total_conv_pct}%)"
-                 + (f"  |  CPD реальный ${total_cpd}" if total_cpd else ""))
+        L.append(f"<b>№{num} — {_html.escape(name)}</b>")
+        cpl_str = _fmt_money(cpl1) if cpl1 is not None else "—"
+        if cpl1 is not None and cpl2:
+            arrow = "🔺" if cpl1 > cpl2 * 1.15 else ("🔻" if cpl1 < cpl2 * 0.85 else "▪️")
+            cpl_str += f" {arrow} (было {_fmt_money(cpl2)})"
+        elif l1 == 0 and s1 > 0:
+            cpl_str = "нет лидов ⛔"
+        L.append(f"  💸 {_fmt_money(s1)}  |  лидов <b>{l1}</b>"
+                 + (f" (было {l2})" if have_prev else "")
+                 + f"  |  CPL {cpl_str}")
 
-    block = "\n".join(lines)
+        parts = []
+        if fu1["engaged"]:
+            parts.append(f"💬 завязались: {fu1['engaged']}")
+        conv = sl.conversions(fu1)
+        if conv:
+            parts.append(f"✅ бронь/оплата: {conv}")
+        if fu1["cancel"]:
+            parts.append(f"❌ отмена: {fu1['cancel']}")
+        if fu1["ignore"]:
+            parts.append(f"👻 игнор: {fu1['ignore']}")
+        if parts:
+            L.append("  " + "  |  ".join(parts))
+        L.append("")
 
-    # AI summary (компактный текст без HTML)
-    summary_lines = [f"=== CRM-атрибуция рекламы ({date_from}–{date_to}) ==="]
-    for num, c, m in rows:
-        spend = m.get("spend", 0.0)
-        conv  = c["bron"] + c["tu_paid"] + c["paid"]
-        cpd   = round(spend / c["dialogs"], 1) if c["dialogs"] and spend else "н/д"
-        title_src = c.get("title") or m.get("name", "")
-        name = _short_name(title_src) if title_src else f"кампания №{num}"
-        summary_lines.append(
-            f"№{num} {name}: диалогов={c['dialogs']}, конв.={conv}, "
-            f"отмен={c['cancel']}, CPD=${cpd}, расход7д=${spend:.0f}"
-        )
-    summary_lines.append(
-        f"Всего: диалогов={total_crm_dialogs}, конв.={total_conv} ({total_conv_pct}%), расход=${total_spend:.0f}"
-    )
-    ai_summary = "\n".join(summary_lines)
+    cpl_tot1 = tot_s1 / tot_l1 if tot_l1 else None
+    cpl_tot2 = tot_s2 / tot_l2 if tot_l2 else None
+    tail = f"  |  CPL {_fmt_money(cpl_tot1)}" if cpl_tot1 else ""
+    if cpl_tot1 and cpl_tot2:
+        tail += f" (было {_fmt_money(cpl_tot2)})"
+    L.append(f"<b>Итого:</b> {_fmt_money(tot_s1)}  |  лидов {tot_l1}"
+             + (f" (было {tot_l2})" if have_prev else "")
+             + f"  |  бронь/оплата {tot_c1}{tail}")
 
-    return block, ai_summary
+    if stopped:
+        L.append(f"⏹ Не крутились на этой неделе: {', '.join('№' + n for n in stopped)} "
+                 f"(на прошлой лиды были).")
+
+    tail_day = (d1_to + dt.timedelta(days=1)).isoformat()
+    if tail_day in missing:
+        L.append(f"\nℹ️ Клиенты, пришедшие {d1_to.strftime('%d.%m')} после 21:00, попадают "
+                 f"в выгрузку за {tail_day[8:10]}.{tail_day[5:7]} — её ещё нет, "
+                 f"лиды последнего дня неполные.")
+    inner = [m for m in missing if m != tail_day]
+    if inner:
+        L.append(f"⚠️ Нет выгрузок Salebot за: {', '.join(inner)} — лиды занижены.")
+
+    block = "\n".join(L)
+
+    A = [f"=== Атрибуция Meta→Salebot, неделя {d1_from}–{d1_to} ==="]
+    if not status["alive"]:
+        A.append("ВНИМАНИЕ: Meta не отдаёт метрики переписок с ~23.08.2026; "
+                 "лиды посчитаны по метке instagram_ads_data в Salebot.")
+    for num in nums:
+        s1 = sp1.get(num, {}).get("spend", 0.0)
+        fu1 = f1.get(num) or sl._blank_funnel()
+        if s1 == 0 and fu1["leads"] == 0:
+            continue
+        l2 = (f2.get(num) or {}).get("leads", 0)
+        cpl = f"${s1 / fu1['leads']:.1f}" if fu1["leads"] else "нет лидов"
+        A.append(f"№{num} {sl.short_name(fu1['title'] or sp1.get(num, {}).get('name', ''))}: "
+                 f"расход=${s1:.0f}, лидов={fu1['leads']} (пред.нед. {l2}), CPL={cpl}, "
+                 f"завязались={fu1['engaged']}, бронь/оплата={sl.conversions(fu1)}, "
+                 f"отмен={fu1['cancel']}")
+    A.append(f"Итого: расход=${tot_s1:.0f}, лидов={tot_l1} (пред.нед. {tot_l2}), "
+             f"бронь/оплата={tot_c1}"
+             + (f", CPL=${cpl_tot1:.1f}" if cpl_tot1 else ""))
+    return block, "\n".join(A)
+
+
+if __name__ == "__main__":
+    b, s = build_attribution()
+    print(s)
+    print("\n---- telegram ----\n")
+    print(b)

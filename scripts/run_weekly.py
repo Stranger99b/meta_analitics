@@ -14,6 +14,7 @@ from analyze_weekly import analyze_weekly
 from ai_audit import ai_audit
 from send_telegram import send_message
 from ig_followers import fetch_and_record, format_followers_block
+from crm_attribution import build_attribution
 
 WEEKLY_SYSTEM_PROMPT = """Ты — эксперт по платной рекламе в Meta Ads (Facebook/Instagram).
 Тебе передаются данные туристической компании за две недели для сравнительного анализа.
@@ -44,6 +45,17 @@ def main():
 
         report, summary = analyze_weekly()
 
+        # Атрибуция «расход Meta → лиды Salebot». С ~23.08.2026 Meta не отдаёт
+        # метрики переписок, поэтому это единственный источник знаменателя CPL.
+        try:
+            attribution_block, attribution_summary = build_attribution()
+        except Exception as e:
+            print(f"[run_weekly] crm_attribution failed (non-fatal): {e}")
+            attribution_block, attribution_summary = "", ""
+
+        if attribution_summary:
+            summary = summary + "\n\n" + attribution_summary
+
         print("[run_weekly] Requesting AI weekly audit from Claude...")
 
         # Override the prompt in ai_audit by passing a custom one
@@ -73,6 +85,11 @@ def main():
             f.write(full_report)
 
         send_message(full_report)
+
+        if attribution_block:
+            send_message(attribution_block, parse_mode="HTML")
+            print("[run_weekly] CRM attribution sent.")
+
         print(f"[run_weekly] Done. Report saved → reports/weekly_{date_str}.txt")
 
     except Exception:
