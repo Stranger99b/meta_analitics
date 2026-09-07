@@ -51,6 +51,16 @@ from send_telegram import send_message
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 ARCHIVE_DIR = os.path.join(DATA_DIR, "ads_daily")
 
+# «Дорогие» действия: их Meta считает честно и не режет (в отличие от метрик
+# переписок, отключённых 20.08.2026), а низкоинтентная аудитория их не делает.
+# На обвале 24.08 они просели вдвое-вчетверо ещё до того, как это стало видно
+# по лидам, — поэтому годятся как ранний индикатор качества открутки.
+QUALITY_ACTIONS = (
+    "onsite_conversion.post_save",
+    "post_reaction",
+    "comment",
+)
+
 # Кампания сожгла столько и не дала ни одного лида → тревога.
 NO_LEAD_SPEND_ALERT = 30.0
 # Во сколько раз CPL должен превысить норму, чтобы это считалось скачком.
@@ -74,6 +84,18 @@ def _insights(level: str, fields: str, since: dt.date, until: dt.date) -> list[d
 
 def _money(v: float) -> str:
     return f"${v:,.0f}".replace(",", " ") if abs(v) >= 10 else f"${v:.1f}"
+
+
+def _quality_per_1000(rows: list[dict]) -> float:
+    """Сохранения + реакции + комментарии на 1000 показов."""
+    imp = _sum(rows, "impressions")
+    if not imp:
+        return 0.0
+    total = 0
+    for r in rows:
+        acts = _actions(r)
+        total += sum(acts.get(a, 0) for a in QUALITY_ACTIONS)
+    return 1000 * total / imp
 
 
 def _sum(rows: list[dict], field: str) -> float:
@@ -129,9 +151,11 @@ def collect(day: dt.date) -> dict:
             # там, где расход и CTR ещё выглядят нормально. Именно этот показатель
             # вскрыл обвал 22-24.08.2026: 4-6 на 100 кликов → 1.1.
             "leads_per_100_clicks": (100 * len(leads_base) / clicks_base) if clicks_base else 0,
+            "quality_per_1000": _quality_per_1000(camps_base),
             "by_campaign_spend": spend_by_campaign(camps_base),
             "by_campaign_leads": sl.group_by_campaign(leads_base),
         },
+        "quality_per_1000": _quality_per_1000(camps_day),
         "meta_messaging": dict(msg_actions),
         "ads_count": len(ads_day),
         "missing_dumps": missing,
@@ -157,6 +181,12 @@ def _alerts(d: dict) -> list[str]:
         out.append(f"Из 100 кликов доходит до диалога {l100:.1f} против нормы "
                    f"{l100_base:.1f} — клики есть, диалогов нет. Проверить связку "
                    f"Instagram→Salebot, а не креативы.")
+
+    q, q_base = d["quality_per_1000"], b["quality_per_1000"]
+    if d["impressions"] >= 20000 and q_base >= 0.5 and q < q_base * 0.6:
+        out.append(f"Качество аудитории {q:.2f} против нормы {q_base:.2f} — Meta льёт "
+                   f"на низкоинтентных. Проверить, регистрируется ли событие конверсии "
+                   f"по переписке.")
 
     if b["leads_per_day"] >= 3 and d["leads"] < b["leads_per_day"] * 0.5:
         out.append(f"Лидов {d['leads']} против нормы {b['leads_per_day']:.1f}/день "
@@ -198,6 +228,9 @@ def render(d: dict) -> str:
     l100 = 100 * d["leads"] / d["clicks"] if d["clicks"] else 0
     L.append(f"🖱 Из 100 кликов в диалог: <b>{l100:.1f}</b> "
              f"<i>(норма {b['leads_per_100_clicks']:.1f})</i>")
+    L.append(f"💎 Качество аудитории: <b>{d['quality_per_1000']:.2f}</b> "
+             f"<i>(норма {b['quality_per_1000']:.2f}; сохранения+реакции+комментарии "
+             f"на 1000 показов)</i>")
     L.append(f"🌱 Органика: <b>{d['clients']['organic']}</b> "
              f"<i>(норма {b['organic_per_day']:.1f}/день)</i>")
 
