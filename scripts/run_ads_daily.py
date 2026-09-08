@@ -7,6 +7,8 @@
 чтобы каждое утро видеть состояние рекламы и ловить проблемы Meta:
 
   • расход и лиды за вчера, CPL, сравнение с нормой (7 дней до вчера);
+  • недельный CPL по скользящей неделе, включая отчётный день, — дневной при
+    2-5 диалогах шумный, для решений по бюджету смотреть на него;
   • «лид» = НОВЫЙ клиент Salebot с меткой instagram_ads_data. Рядом отдельной
     строкой — старые клиенты с меткой, писавшие в тот же день: их в разы больше,
     и без этой строки «2 лида за день» выглядит ошибкой (06.09.2026: 2 новых
@@ -136,6 +138,14 @@ def collect(day: dt.date) -> dict:
 
     clicks_base = int(_sum(camps_base, "clicks"))
 
+    # Скользящая неделя, ВКЛЮЧАЯ отчётный день. Дневной CPL при 2-5 диалогах
+    # шумный — один клиент двигает его на десятки долларов, — поэтому для
+    # решений по бюджету нужен недельный срез.
+    wk_from = day - dt.timedelta(days=6)
+    camps_week = _insights("campaign", CAMPAIGN_INSIGHT_FIELDS, wk_from, day)
+    leads_week = len(sl.load_leads(wk_from, day))
+    spend_week = _sum(camps_week, "spend")
+
     return {
         "day": day.isoformat(),
         "spend": _sum(camps_day, "spend"),
@@ -143,6 +153,11 @@ def collect(day: dt.date) -> dict:
         "clicks": int(_sum(camps_day, "clicks")),
         "leads": len(leads_day),
         "returning_ads": returning,
+        "week": {
+            "from": wk_from.isoformat(), "to": day.isoformat(),
+            "spend": spend_week, "leads": leads_week,
+            "cpl": (spend_week / leads_week) if leads_week else None,
+        },
         "by_campaign_spend": spend_by_campaign(camps_day),
         "by_campaign_leads": sl.group_by_campaign(leads_day),
         "clients": clients_day,
@@ -232,6 +247,10 @@ def render(d: dict) -> str:
              f"{_money(b['spend_per_day'])}/день · {b['leads_per_day']:.1f} лид./день · "
              f"CPL {_money(cpl_base) if cpl_base else '—'}</i>")
     l100 = 100 * d["leads"] / d["clicks"] if d["clicks"] else 0
+    w = d["week"]
+    wcpl = _money(w["cpl"]) if w["cpl"] else "—"
+    L.append(f"📅 За 7 дней ({w['from'][8:10]}.{w['from'][5:7]}–{w['to'][8:10]}.{w['to'][5:7]}): "
+             f"{_money(w['spend'])} · {w['leads']} диалогов · <b>CPL {wcpl}</b>")
     L.append(f"🖱 Из 100 кликов в диалог: <b>{l100:.1f}</b> "
              f"<i>(норма {b['leads_per_100_clicks']:.1f})</i>")
     L.append(f"💎 Качество аудитории: <b>{d['quality_per_1000']:.2f}</b> "
