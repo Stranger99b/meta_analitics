@@ -178,6 +178,42 @@ def load_leads(date_from: dt.date, date_to: dt.date, tail_days: int = 1) -> list
     return leads
 
 
+def _wrote_on(rec: dict, day: dt.date) -> bool:
+    """Клиент писал сам в этот календарный день (служебное не считаем)."""
+    h = rec.get("history_json") or []
+    if isinstance(h, str):
+        try:
+            h = json.loads(h) if h.strip() else []
+        except Exception:
+            return False
+    d = day.isoformat()
+    for m in h:
+        if (m.get("client_replica") and m.get("message_from_outside") in (0, None)
+                and isinstance(m.get("text"), str) and m["text"].strip()
+                and not m["text"].startswith("change_responsible")
+                and str(m.get("created_at") or "")[:10] == d):
+            return True
+    return False
+
+
+def returning_ad_writers(day: dt.date, tail_days: int = 1) -> int:
+    """
+    Клиенты с меткой рекламы, пришедшие РАНЬШЕ, но писавшие в этот день.
+
+    Нужно рядом с числом новых лидов: без этого «2 лида за день» выглядит
+    невероятным, хотя всего с меткой рекламы в тот день писали 17 человек.
+    Метка `instagram_ads_data` — постоянный атрибут клиента, поэтому это НЕ
+    сегодняшние клики по рекламе, а продолжение старых диалогов; в знаменатель
+    CPL они не идут.
+    """
+    n = 0
+    for rec in _load_records(day, day, tail_days, ads_only=True).values():
+        created = _created(rec)
+        if created and created.date() < day and _wrote_on(rec, day):
+            n += 1
+    return n
+
+
 def _blank_funnel() -> dict:
     return {"leads": 0, "replied": 0, "engaged": 0, "work": 0, "bron": 0,
             "tu_paid": 0, "paid": 0, "cancel": 0, "ignore": 0, "other": 0, "title": ""}

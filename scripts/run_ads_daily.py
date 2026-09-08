@@ -7,6 +7,10 @@
 чтобы каждое утро видеть состояние рекламы и ловить проблемы Meta:
 
   • расход и лиды за вчера, CPL, сравнение с нормой (7 дней до вчера);
+  • «лид» = НОВЫЙ клиент Salebot с меткой instagram_ads_data. Рядом отдельной
+    строкой — старые клиенты с меткой, писавшие в тот же день: их в разы больше,
+    и без этой строки «2 лида за день» выглядит ошибкой (06.09.2026: 2 новых
+    против 15 старых). В знаменатель CPL старые не идут;
   • разбивка по кампаниям + тревоги (расход без лидов, скачок CPL);
   • органика рядом с рекламой — чтобы отличить проблему Meta от проблемы
     канала Instagram→Salebot (в конце августа падало и то и другое);
@@ -119,6 +123,7 @@ def collect(day: dt.date) -> dict:
     leads_day = sl.load_leads(day, day)
     leads_base = sl.load_leads(base_from, base_to)
     clients_day = sl.count_new_clients(day, day)
+    returning = sl.returning_ad_writers(day)
     clients_base = sl.count_new_clients(base_from, base_to)
 
     _, missing = sl.dump_days_present(day, day)
@@ -137,6 +142,7 @@ def collect(day: dt.date) -> dict:
         "impressions": int(_sum(camps_day, "impressions")),
         "clicks": int(_sum(camps_day, "clicks")),
         "leads": len(leads_day),
+        "returning_ads": returning,
         "by_campaign_spend": spend_by_campaign(camps_day),
         "by_campaign_leads": sl.group_by_campaign(leads_day),
         "clients": clients_day,
@@ -231,6 +237,9 @@ def render(d: dict) -> str:
     L.append(f"💎 Качество аудитории: <b>{d['quality_per_1000']:.2f}</b> "
              f"<i>(норма {b['quality_per_1000']:.2f}; сохранения+реакции+комментарии "
              f"на 1000 показов)</i>")
+    L.append(f"🔁 Старые клиенты с меткой рекламы, писавшие в этот день: "
+             f"<b>{d['returning_ads']}</b> <i>(в CPL не входят — это продолжение "
+             f"прежних диалогов, а не новые клики)</i>")
     L.append(f"🌱 Органика: <b>{d['clients']['organic']}</b> "
              f"<i>(норма {b['organic_per_day']:.1f}/день)</i>")
 
