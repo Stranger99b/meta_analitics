@@ -6,15 +6,13 @@ Cron: 1-е число месяца (за предыдущий месяц). Ар�
 """
 import os
 import sys
-import time
-import shutil
-import subprocess
 import traceback
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import ai_review
 from fetch_ig_monthly import fetch_and_save
 from analyze_ig_monthly import build_digest, build_ai_summary
 from send_telegram import send_message
@@ -38,42 +36,10 @@ AI_INSTRUCTION = (
 )
 
 
-def _looks_complete(text: str) -> bool:
-    if not text:
-        return False
-    has_recs = "РЕКОМЕНДАЦ" in text.upper() or "5)" in text
-    ends_ok = text.rstrip()[-1:] in ".!?»)0123456789"
-    return has_recs and ends_ok
-
-
-def qwen_review(summary: str, attempts: int = 4) -> str:
-    qwen = shutil.which("qwen-ask") or "/home/user/.local/bin/qwen-ask"
-    if not os.path.exists(qwen):
-        print("[run_ig_monthly] qwen-ask не найден — без AI-блока")
-        return ""
-    best = ""
-    for i in range(1, attempts + 1):
-        try:
-            r = subprocess.run(
-                [qwen, "--role", "long", "--max-tokens", "3500", AI_INSTRUCTION],
-                input=summary, capture_output=True, text=True, timeout=240)
-            if r.returncode == 3 or "QWEN_QUOTA_EXCEEDED" in r.stderr:
-                print("[run_ig_monthly] Qwen упёрся в лимит — без AI-блока")
-                return best
-            out = r.stdout.strip()
-            if len(out) > len(best):
-                best = out
-            if _looks_complete(out):
-                print(f"[run_ig_monthly] AI-оценка получена от Qwen (попытка {i})")
-                return out
-            print(f"[run_ig_monthly] Ответ Qwen оборван/пуст (попытка {i}/{attempts}), ретрай…")
-        except Exception as e:  # noqa: BLE001
-            print(f"[run_ig_monthly] Qwen ошибка (попытка {i}): {e}")
-        if i < attempts:
-            time.sleep(4)
-    if best:
-        print("[run_ig_monthly] Полного ответа не вышло — беру самый длинный")
-    return best
+def qwen_review(summary: str) -> str:
+    """AI-оценка месяца: Qwen (--role long), при недоступности — фолбэк на Claude."""
+    return ai_review.generate(AI_INSTRUCTION, summary,
+                              tag="run_ig_monthly", max_tokens=3500)
 
 
 def main():

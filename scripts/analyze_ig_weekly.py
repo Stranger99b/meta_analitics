@@ -65,6 +65,15 @@ def build_digest(data) -> str:
         viral_thr = avg * 2
         content.sort(key=lambda c: c["insights"]["views"], reverse=True)
         S.append(rf.b(f"Контент недели · {len(content)} публ. · ср. {rf.fmt(round(avg))}"))
+        feed = [c for c in content if c.get("media_product_type") == "FEED"]
+        if feed:
+            def _fs(k):
+                return sum((c["insights"].get(k) or 0) for c in feed)
+            S.append(f"Посты ленты ({len(feed)}): визиты профиля {rf.fmt(_fs('profile_visits'))} · "
+                     f"подписки {rf.fmt(_fs('follows'))} · клики в профиле {rf.fmt(_fs('profile_activity'))}")
+            S.append("Подписки — сколько подписались сразу после просмотра поста (обычно мало: "
+                     "пост видят в основном уже подписанные). Визиты профиля — сколько с поста "
+                     "зашли в профиль. Для reels Instagram эти данные не отдаёт.")
         for i, c in enumerate(content[:8], 1):
             ins = c["insights"]
             v = ins.get("views", 0)
@@ -111,6 +120,13 @@ def build_ai_summary(data) -> str:
         cap = (c.get("caption") or "").replace("\n", " ").strip()[:60]
         parts.append(f"- {_content_label(c)} просмотры={c['insights']['views']} "
                      f"лайки={c['insights'].get('likes')} «{cap}»")
+    feed = [c for c in content if c.get("media_product_type") == "FEED"]
+    if feed:
+        def _fs(k):
+            return sum((c["insights"].get(k) or 0) for c in feed)
+        parts.append(f"Посты ленты за период: {len(feed)} шт, визиты профиля={_fs('profile_visits')}, "
+                     f"подписки={_fs('follows')}, клики в профиле={_fs('profile_activity')} "
+                     f"(reels подписки/визиты не отдаёт).")
     stories = data.get("stories", [])
     cmp = icc.compare(data.get("content", []), stories)
     parts.append("Сравнение типов (кол-во / ср.просмотры):")

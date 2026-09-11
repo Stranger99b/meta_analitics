@@ -6,15 +6,13 @@ Cron: 1-го числа (за предыдущий месяц). Динамиче
 """
 import os
 import sys
-import time
-import shutil
-import subprocess
 import traceback
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import ai_review
 from fetch_ig_monthly import fetch_and_save
 from analyze_ig_monthly import build_ai_summary
 import research_pdf
@@ -30,23 +28,9 @@ AI_INSTRUCTION = (
 
 
 def _focus(summary):
-    qwen = shutil.which("qwen-ask") or "/home/user/.local/bin/qwen-ask"
-    if not os.path.exists(qwen):
-        return ""
-    for i in range(3):
-        try:
-            r = subprocess.run([qwen, "--role", "long", "--max-tokens", "1200",
-                                AI_INSTRUCTION], input=summary,
-                               capture_output=True, text=True, timeout=200)
-            if r.returncode == 3 or "QWEN_QUOTA_EXCEEDED" in r.stderr:
-                return ""
-            out = r.stdout.strip()
-            if out:
-                return out
-        except Exception:  # noqa: BLE001
-            pass
-        time.sleep(4)
-    return ""
+    """Фокус на месяц: Qwen (--role long), при недоступности — фолбэк на Claude."""
+    return ai_review.generate(AI_INSTRUCTION, summary,
+                              tag="run_strategy_monthly", max_tokens=1200)
 
 
 def main():

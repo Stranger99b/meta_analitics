@@ -53,6 +53,7 @@ from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign
 from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, ad_accounts, _get_all_pages, \
     CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
 from send_telegram import send_message, redact
+from secrets_scrub import scrub
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 ARCHIVE_DIR = os.path.join(DATA_DIR, "ads_daily")
@@ -402,7 +403,7 @@ def main():
 
         os.makedirs(ARCHIVE_DIR, exist_ok=True)
         with open(os.path.join(ARCHIVE_DIR, f"{day.isoformat()}.json"), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(scrub(data), f, ensure_ascii=False, indent=2)
 
         if args.dry_run:
             print(text)

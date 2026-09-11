@@ -214,6 +214,24 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
         content.sort(key=lambda c: c["insights"]["views"], reverse=True)
         avg = sum(c["insights"]["views"] for c in content) / len(content)
         D.append(Paragraph(E("memo") + f"Контент недели · {len(content)} публ.", ST_H2))
+        feed = [c for c in content if c.get("media_product_type") == "FEED"]
+        if feed:
+            def _fs(k):
+                return sum((c["insights"].get(k) or 0) for c in feed)
+            D.append(Paragraph(
+                f'{E("person")}Посты ленты ({len(feed)}): визиты профиля '
+                f'<b>{_f(_fs("profile_visits"))}</b> · {E("plus")}подписки '
+                f'<b>{_f(_fs("follows"))}</b> · клики в профиле {_f(_fs("profile_activity"))}',
+                ST_BODY))
+            D.append(Paragraph(
+                "<b>Подписки</b> — сколько человек подписались на профиль сразу после "
+                "просмотра поста (так Instagram привязывает подписку к публикации); "
+                "обычно мало — пост в ленте видят в основном уже подписанные. "
+                "<b>Визиты профиля</b> — сколько с поста открыли профиль. "
+                "<b>Клики в профиле</b> — нажатия на кнопки (сайт, адрес, e-mail). "
+                "Для reels Instagram эти данные не отдаёт.",
+                ST_CAP))
+            D.append(Spacer(1, 3))
         for i, c in enumerate(content[:8], 1):
             ins = c["insights"]
             v = ins.get("views", 0)
@@ -332,6 +350,23 @@ def _content_block(content, title, limit, W):
     content.sort(key=lambda c: c["insights"]["views"], reverse=True)
     avg = sum(c["insights"]["views"] for c in content) / len(content)
     out.append(Paragraph(E("memo") + f"{title} · {len(content)} публ.", ST_H2))
+    feed = [c for c in content if c.get("media_product_type") == "FEED"]
+    if feed:
+        def _fs(k):
+            return sum((c["insights"].get(k) or 0) for c in feed)
+        out.append(Paragraph(
+            f'{E("person")}Посты ленты ({len(feed)}): визиты профиля '
+            f'<b>{_f(_fs("profile_visits"))}</b> · {E("plus")}подписки '
+            f'<b>{_f(_fs("follows"))}</b> · клики в профиле {_f(_fs("profile_activity"))}',
+            ST_BODY))
+        out.append(Paragraph(
+            "<b>Подписки</b> — сколько человек подписались на профиль сразу после "
+            "просмотра поста (так Instagram привязывает подписку к публикации); "
+            "обычно мало — пост в ленте видят в основном уже подписанные. "
+            "<b>Визиты профиля</b> — сколько с поста открыли профиль. "
+            "<b>Клики в профиле</b> — нажатия на кнопки (сайт, адрес, e-mail). "
+            "Для reels Instagram эти данные не отдаёт.", ST_CAP))
+        out.append(Spacer(1, 3))
     for i, c in enumerate(content[:limit], 1):
         ins = c["insights"]
         v = ins.get("views", 0)
@@ -494,6 +529,14 @@ def _score_block(score, W):
             style.append(("BACKGROUND", (0, i), (-1, i), BAND))
     t.setStyle(TableStyle(style))
     out.append(t)
+    out.append(Spacer(1, 3))
+    out.append(Paragraph(
+        "<b>Как считается балл.</b> Каждый критерий даёт долю (0–100%) × свой вес; "
+        "сумма → 0–100 → оценка 1–10. Критерии с нормой (ER, удержание сторис) — "
+        "<b>гибрид: 60% балла за достижение нормы + 40% за динамику к прошлому периоду.</b> "
+        "Поэтому показатель может быть выше нормы (эти 60% начислены полностью), но если он "
+        "упал к прошлому месяцу — 40% за динамику не начисляются, и критерий не даёт максимум. "
+        "Критерии без данных из рубрики исключаются.", ST_CAP))
     return out
 
 
@@ -549,8 +592,9 @@ def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
               Paragraph(f"<b>{_f(prof.get('followers_count'))}</b>", ST_VAL)]]
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
+        gsign = "+" if fg >= 0 else "−"
         arows.append([Paragraph("Прирост за месяц", ST_LBL),
-                      Paragraph(f"<b>+{_f(fg)}</b>{_trend(fg, fgp)}", ST_VAL)])
+                      Paragraph(f"<b>{gsign}{_f(abs(fg))}</b>{_trend(fg, fgp)}", ST_VAL)])
     arows.append([Paragraph("Публикаций (рилс+посты)", ST_LBL),
                   Paragraph(f"<b>{data.get('posts_count', 0)}</b>", ST_VAL)])
     D.append(_audience_table(arows, W))

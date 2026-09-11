@@ -13,6 +13,7 @@ import datetime as dt
 sys.path.insert(0, os.path.dirname(__file__))
 import fetch_ig_weekly as fiw  # noqa: E402
 import ig_content_compare as icc  # noqa: E402
+from secrets_scrub import scrub
 
 DATA_DIR = fiw.DATA_DIR
 RU_MONTHS = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль",
@@ -60,6 +61,47 @@ def _follower_growth_ranged(start, end):
     return total if got else None
 
 
+def _load_follower_history():
+    """История абсолютных значений подписчиков {date: count} из ig_followers.py."""
+    path = os.path.join(DATA_DIR, "followers_history.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        return {dt.date.fromisoformat(k): int(v) for k, v in raw.items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _interp(hist, target):
+    """Значение подписчиков на дату target: точное или линейной интерполяцией
+    между ближайшими снимками. None, если снимками не покрыто (без экстраполяции)."""
+    if not hist:
+        return None
+    if target in hist:
+        return hist[target]
+    before = [d for d in hist if d <= target]
+    after = [d for d in hist if d >= target]
+    if not before or not after:
+        return None
+    a, b = max(before), min(after)
+    if a == b:
+        return hist[a]
+    return hist[a] + (hist[b] - hist[a]) * ((target - a).days / ((b - a).days))
+
+
+def _follower_growth_history(hist, start, end):
+    """Прирост за [start, end) = подписчики на end минус на start (по истории).
+
+    Точнее API-метрики follower_count, у которой окно всего 30 дней (без текущего
+    дня) — на месячной границе она даёт ноль/пусто. None → вызывающий откатится на API.
+    """
+    vs = _interp(hist, start)
+    ve = _interp(hist, end)
+    if vs is None or ve is None:
+        return None
+    return round(ve - vs)
+
+
 def _content_in_range(start, end):
     d = fiw._get(f"{fiw.IG_ID}/media", {
         "fields": "id,media_type,media_product_type,caption,permalink,timestamp,"
@@ -73,7 +115,7 @@ def _content_in_range(start, end):
         except ValueError:
             continue
         if start <= pd < end:
-            m["insights"] = fiw._media_insights(m["id"])
+            m["insights"] = fiw._media_insights(m["id"], m.get("media_product_type"))
             items.append(m)
     return items
 
@@ -94,17 +136,34 @@ def fetch_and_save(target=None):
     stories = icc.stories_in_range(m_start, m_end)
     earliest = icc.stories_since_earliest()
 
+    profile = fiw._get(fiw.IG_ID, {"fields": "username,followers_count,media_count"})
+
+    # Прирост подписчиков — по нашей истории абсолютных снимков (точно на границе
+    # месяца), с добавлением сегодняшней живой точки. Фолбэк — API follower_count.
+    hist = _load_follower_history()
+    cur_foll = profile.get("followers_count")
+    if cur_foll:
+        hist[today] = int(cur_foll)
+    fg_month = _follower_growth_history(hist, m_start, m_end)
+    fg_prev = _follower_growth_history(hist, p_start, p_end)
+    fg_month_src = "history" if fg_month is not None else "api"
+    if fg_month is None:
+        fg_month = _follower_growth_ranged(m_start, m_end)
+    if fg_prev is None:
+        fg_prev = _follower_growth_ranged(p_start, p_end)
+
     data = {
         "generated": dt.datetime.now().isoformat(),
         "month": {"year": y, "month": m, "name": RU_MONTHS[m],
                   "since": str(m_start), "until": str(m_end)},
         "prev_month": {"name": RU_MONTHS[p_start.month],
                        "since": str(p_start), "until": str(p_end)},
-        "profile": fiw._get(fiw.IG_ID, {"fields": "username,followers_count,media_count"}),
+        "profile": profile,
         "totals_month": _totals_ranged(m_start, m_end),
         "totals_prev": _totals_ranged(p_start, p_end),
-        "follower_growth_month": _follower_growth_ranged(m_start, m_end),
-        "follower_growth_prev": _follower_growth_ranged(p_start, p_end),
+        "follower_growth_month": fg_month,
+        "follower_growth_prev": fg_prev,
+        "follower_growth_source": fg_month_src,
         "content": content,
         "posts_count": len(content),
         "stories": stories,
@@ -114,11 +173,11 @@ def fetch_and_save(target=None):
     os.makedirs(os.path.join(DATA_DIR, "archive"), exist_ok=True)
     with open(os.path.join(DATA_DIR, "latest_ig_monthly.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     tag = f"{y}-{m:02d}"
     with open(os.path.join(DATA_DIR, "archive", f"ig_monthly_{tag}.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     print(f"[fetch_ig_monthly] {RU_MONTHS[m]} {y}: контент {len(content)}, "
           f"сторис {len(stories)}")
     return data

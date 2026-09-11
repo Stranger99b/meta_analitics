@@ -30,7 +30,8 @@ def build_digest(data) -> str:
     S.append(rf.line("Подписчики", prof.get("followers_count")))
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        S.append(f"Прирост за месяц — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
+        gsign = "+" if fg >= 0 else "−"
+        S.append(f"Прирост за месяц — {gsign}{rf.fmt(abs(fg))}{rf.delta(fg, fgp)}")
     S.append(f"Публикаций (рилс+посты) — {data.get('posts_count', 0)}")
 
     S.append("")
@@ -56,6 +57,15 @@ def build_digest(data) -> str:
         viral_thr = avg * 2
         content.sort(key=lambda c: c["insights"]["views"], reverse=True)
         S.append(rf.b(f"Топ публикаций месяца · {len(content)}"))
+        feed = [c for c in content if c.get("media_product_type") == "FEED"]
+        if feed:
+            def _fs(k):
+                return sum((c["insights"].get(k) or 0) for c in feed)
+            S.append(f"Посты ленты ({len(feed)}): визиты профиля {rf.fmt(_fs('profile_visits'))} · "
+                     f"подписки {rf.fmt(_fs('follows'))} · клики в профиле {rf.fmt(_fs('profile_activity'))}")
+            S.append("Подписки — сколько подписались сразу после просмотра поста (обычно мало: "
+                     "пост видят в основном уже подписанные). Визиты профиля — сколько с поста "
+                     "зашли в профиль. Для reels Instagram эти данные не отдаёт.")
         for i, c in enumerate(content[:10], 1):
             ins = c["insights"]
             v = ins.get("views", 0)

@@ -6,6 +6,7 @@ import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from secrets_scrub import scrub
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -183,7 +184,7 @@ def fetch_and_save(date_preset="yesterday"):
 
     for path in (out_path, archive_path):
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+            json.dump(scrub(result), f, ensure_ascii=False, indent=2)
 
     print(
         f"[fetch] Saved: {len(yesterday)} campaigns yesterday, "

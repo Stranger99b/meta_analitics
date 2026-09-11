@@ -14,6 +14,7 @@ import datetime as dt
 
 sys.path.insert(0, os.path.dirname(__file__))
 import fetch_ig_weekly as fiw  # noqa: E402  (переиспуем _get, IG_ID, DATA_DIR)
+from secrets_scrub import scrub
 
 STORY_METRICS = ("reach,views,replies,total_interactions,navigation,"
                  "profile_visits,follows,shares")
@@ -80,7 +81,7 @@ def snapshot():
             "captured": dt.datetime.now().isoformat(),
         }
     with open(STORE, "w", encoding="utf-8") as f:
-        json.dump(store, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(store), f, ensure_ascii=False, indent=2)
     print(f"[ig_stories] активных сейчас: {len(stories)}, новых: {added}, "
           f"всего в базе: {len(store)}")
     # заливаем полную историю в Google-таблицу (не критично, если недоступна)

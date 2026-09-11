@@ -123,28 +123,37 @@ def _handle(m):
 
 
 def _stash_media(m):
-    """Сохраняет присланные фото/документы в data/incoming (чтобы не потерять их
-    из-за того, что поллер «съедает» апдейты — напр. скрины для Claude)."""
+    """Сохраняет присланные фото/видео/документы в data/incoming (чтобы не потерять их
+    из-за того, что поллер «съедает» апдейты — напр. скрины и ролики для Claude)."""
     f = None
     if m.get("photo"):
         f = sorted(m["photo"], key=lambda x: x.get("file_size", 0))[-1]
-    elif m.get("document"):
-        f = m["document"]
+    else:
+        for k in ("document", "video", "animation", "video_note", "audio", "voice"):
+            if m.get(k):
+                f = m[k]
+                break
     if not f:
         return
     try:
         fi = requests.get(f"{API}/getFile",
                           params={"file_id": f["file_id"]}, timeout=20).json()
+        if not fi.get("ok"):
+            size = f.get("file_size")
+            print(f"[stories_ondemand] getFile отказал: {fi.get('description')} "
+                  f"(file_size={size}); Bot API отдаёт только файлы до 20 МБ")
+            return
         path = fi["result"]["file_path"]
         raw = requests.get(f"https://api.telegram.org/file/bot{BOT}/{path}",
-                           timeout=30).content
+                           timeout=120).content
         os.makedirs(os.path.join(DATA_DIR, "incoming"), exist_ok=True)
         name = f"{m.get('date','')}_{os.path.basename(path)}"
         with open(os.path.join(DATA_DIR, "incoming", name), "wb") as out:
             out.write(raw)
-        print(f"[stories_ondemand] сохранил вложение → data/incoming/{name}")
+        print(f"[stories_ondemand] сохранил вложение → data/incoming/{name} "
+              f"({len(raw)} байт)")
     except Exception as e:  # noqa: BLE001
-        print(f"[stories_ondemand] вложение не сохранено: {e}")
+        print(f"[stories_ondemand] вложение не сохранено: {e!r}")
 
 
 def main():

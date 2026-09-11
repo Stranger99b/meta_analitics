@@ -5,8 +5,6 @@
 """
 import os
 import sys
-import shutil
-import subprocess
 import traceback
 from datetime import datetime
 from dotenv import load_dotenv
@@ -14,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import ai_review
 from fetch_threads_weekly import fetch_and_save
 from analyze_threads_weekly import build_digest, build_ai_summary
 from send_telegram import send_message
@@ -28,24 +27,9 @@ AI_INSTRUCTION = (
 
 
 def qwen_commentary(summary: str) -> str:
-    qwen = shutil.which("qwen-ask") or "/home/user/.local/bin/qwen-ask"
-    if not os.path.exists(qwen):
-        print("[run_threads_weekly] qwen-ask не найден — без AI-вывода")
-        return ""
-    try:
-        r = subprocess.run(
-            [qwen, "--role", "long", AI_INSTRUCTION],
-            input=summary, capture_output=True, text=True, timeout=200)
-        if r.returncode == 3 or "QWEN_QUOTA_EXCEEDED" in r.stderr:
-            print("[run_threads_weekly] Qwen упёрся в лимит — без AI-вывода")
-            return ""
-        out = r.stdout.strip()
-        if out:
-            print("[run_threads_weekly] AI-вывод получен от Qwen")
-        return out
-    except Exception as e:  # noqa: BLE001
-        print(f"[run_threads_weekly] Qwen ошибка: {e}")
-        return ""
+    """Вывод недели Threads: Qwen (--role long), при недоступности — фолбэк на Claude."""
+    return ai_review.generate(AI_INSTRUCTION, summary,
+                              tag="run_threads_weekly", max_tokens=1500)
 
 
 def main():

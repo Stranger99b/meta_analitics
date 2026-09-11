@@ -13,6 +13,7 @@ import sys
 import json
 import datetime
 import requests
+from secrets_scrub import scrub
 
 BASE = "https://graph.facebook.com/v21.0"
 IG_ID = "17841422507211860"          # @gotrips_by (из памяти проекта)
@@ -126,7 +127,7 @@ def main():
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, f"ig_insights_{today}.json")
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(out), f, ensure_ascii=False, indent=2)
     print(f"\n💾 Сырой ответ: {path}")
 
     # Саммари по реелс (детектор «залетевших»)

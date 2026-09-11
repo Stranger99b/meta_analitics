@@ -9,6 +9,7 @@ import json
 import datetime
 import requests
 from dotenv import load_dotenv
+from secrets_scrub import scrub
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -21,6 +22,10 @@ TOKEN = os.environ.get("META_ACCESS_TOKEN", "").strip()
 TOTAL_METRICS = ["views", "reach", "profile_views", "accounts_engaged",
                  "total_interactions", "likes", "comments", "saves", "shares"]
 MEDIA_METRICS = "reach,views,likes,comments,saved,shares,total_interactions"
+# Доступны ТОЛЬКО для постов ленты (FEED). Для REELS Graph API отвечает error 100
+# («does not support ... for this media product type»), поэтому тянем отдельно и
+# только для FEED, чтобы не потерять базовые метрики на reels.
+FEED_EXTRA_METRICS = "follows,profile_visits,profile_activity"
 
 
 def _get(path, params=None):
@@ -56,9 +61,10 @@ def _follower_growth(since, until):
         return None
 
 
-def _media_insights(mid):
+def _insights_call(mid, metrics):
+    """Один запрос инсайтов медиа → {metric: value}. При ошибке — {}."""
     try:
-        d = _get(f"{mid}/insights", {"metric": MEDIA_METRICS})
+        d = _get(f"{mid}/insights", {"metric": metrics})
         out = {}
         for row in d.get("data", []):
             v = row.get("values", [{}])
@@ -67,6 +73,14 @@ def _media_insights(mid):
         return out
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _media_insights(mid, product_type=None):
+    out = _insights_call(mid, MEDIA_METRICS)
+    # follows/profile_visits/profile_activity доступны только у постов ленты
+    if product_type == "FEED":
+        out.update(_insights_call(mid, FEED_EXTRA_METRICS))
+    return out
 
 
 def _content_since(week_start):
@@ -81,7 +95,7 @@ def _content_since(week_start):
         except ValueError:
             continue
         if dt >= week_start:
-            m["insights"] = _media_insights(m["id"])
+            m["insights"] = _media_insights(m["id"], m.get("media_product_type"))
             items.append(m)
     return items
 
@@ -113,10 +127,10 @@ def fetch_and_save():
     os.makedirs(os.path.join(DATA_DIR, "archive"), exist_ok=True)
     with open(os.path.join(DATA_DIR, "latest_ig_weekly.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     with open(os.path.join(DATA_DIR, "archive", f"ig_weekly_{today}.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     print(f"[fetch_ig_weekly] Сохранено. Контента за неделю: {len(data['content'])}")
     return data
 

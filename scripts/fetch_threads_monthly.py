@@ -13,6 +13,7 @@ import datetime as dt
 
 sys.path.insert(0, os.path.dirname(__file__))
 import fetch_threads_weekly as ftw  # noqa: E402
+from secrets_scrub import scrub
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 RU_MONTHS = ["", "январь", "февраль", "март", "апрель", "май", "июнь", "июль",
@@ -56,8 +57,13 @@ def fetch_and_save(target=None):
     pv = m_start - dt.timedelta(days=1)
     p_start, p_end = _month_bounds(pv.year, pv.month)
 
-    fw_first, fw_last = ftw._followers_series(m_start, m_end)
-    fp_first, fp_last = ftw._followers_series(p_start, p_end)
+    now_foll = ftw.current_followers()
+    # Прирост — по истории снимков (+ сегодняшняя живая точка), фолбэк на API-ряд
+    hist = ftw.load_follower_history()
+    if now_foll:
+        hist[today] = now_foll
+    fg_month = ftw.follower_growth_history(m_start, m_end, hist)
+    fg_prev = ftw.follower_growth_history(p_start, p_end, hist)
     posts = _posts_in_range(m_start, m_end)
 
     data = {
@@ -67,9 +73,9 @@ def fetch_and_save(target=None):
         "prev_month": {"name": RU_MONTHS[p_start.month],
                        "since": str(p_start), "until": str(p_end)},
         "profile": ftw._get(ftw.USER_ID, {"fields": "id,username"}),
-        "followers_count": fw_last,
-        "follower_growth_month": (fw_last - fw_first) if (fw_last and fw_first) else None,
-        "follower_growth_prev": (fp_last - fp_first) if (fp_last and fp_first) else None,
+        "followers_count": now_foll,
+        "follower_growth_month": fg_month,
+        "follower_growth_prev": fg_prev,
         "totals_month": ftw._account_totals(m_start, m_end),
         "totals_prev": ftw._account_totals(p_start, p_end),
         "posts": posts,
@@ -79,11 +85,11 @@ def fetch_and_save(target=None):
     os.makedirs(os.path.join(DATA_DIR, "archive"), exist_ok=True)
     with open(os.path.join(DATA_DIR, "latest_threads_monthly.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     tag = f"{y}-{m:02d}"
     with open(os.path.join(DATA_DIR, "archive", f"threads_monthly_{tag}.json"), "w",
               encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(data), f, ensure_ascii=False, indent=2)
     print(f"[fetch_threads_monthly] {RU_MONTHS[m]} {y}: постов {len(posts)}")
     return data
 

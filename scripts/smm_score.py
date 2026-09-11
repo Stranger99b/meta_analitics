@@ -17,8 +17,11 @@ import ig_content_compare as icc  # noqa: E402
 
 # === НОРМАТИВ SMM (можно менять) — цели в неделю ===
 NORM_REELS = 2            # Reels/нед
-NORM_CAROUSELS = 1        # карусели/нед
-NORM_POSTS = 1            # одиночные посты/нед
+NORM_CAROUSELS = 1        # карусели/нед (для разбивки в примечании)
+NORM_POSTS = 1            # одиночные посты/нед (для разбивки в примечании)
+# Карусель и одиночное фото — ОДИН тип (лента): считаем и оцениваем вместе, чтобы
+# перевыполнение по каруселям закрывало норму постов и наоборот.
+NORM_FEED = NORM_CAROUSELS + NORM_POSTS  # 2/нед — посты ленты (карусели + фото)
 NORM_STORY_DAYS = 6       # дней со сторис из 7 (ежедневно)
 NORM_THREADS = 4          # постов Threads/нед
 ER_TARGET = 1.5           # целевой ER, % (взаимодействия/охват)
@@ -62,8 +65,7 @@ def plan_vs_fact(data):
         return rows
     reels, carous, posts = _split_content(data.get("content", []))
     add("Reels", NORM_REELS, len(reels))
-    add("Карусели", NORM_CAROUSELS, len(carous))
-    add("Посты", NORM_POSTS, len(posts))
+    add("Посты ленты (карусели+фото)", NORM_FEED, len(carous) + len(posts))
     add("Сторис (дней)", NORM_STORY_DAYS, _story_days(data.get("stories", [])), cap=days)
     return rows
 
@@ -123,8 +125,9 @@ def _reach_item(cur, prev, weight):
         return {"name": "Рост охвата/просмотров", "frac": None, "weight": weight,
                 "note": "нет прошлого периода"}
     g = sum(parts) / len(parts)
-    note = (f"reach {r:+.0f}%" if r is not None else "") + \
-           (f" · views {v:+.0f}%" if v is not None else "")
+    note = ((f"охват {r:+.0f}%" if r is not None else "") +
+            (f" · просмотры {v:+.0f}%" if v is not None else "") +
+            f" · в среднем {g:+.0f}% к пр. месяцу (макс. балл при ≥ +10%)")
     return {"name": "Рост охвата/просмотров", "frac": _lin(g, -10, 10),
             "weight": weight, "note": note.strip(" ·")}
 
@@ -137,10 +140,17 @@ def _er_item(cur, prev, weight, inter_keys):
     pinter = prev.get("total_interactions") or sum((prev.get(k) or 0) for k in inter_keys)
     er_prev = pinter / preach * 100 if preach else 0
     frac_abs = _lin(er, 0, ER_TARGET)
-    frac_dyn = _lin(_pct(er, er_prev), -10, 10) if er_prev else 0.5
+    dyn = _pct(er, er_prev) if er_prev else None
+    frac_dyn = _lin(dyn, -10, 10) if dyn is not None else 0.5
     frac = 0.6 * frac_abs + 0.4 * (frac_dyn if frac_dyn is not None else 0.5)
-    return {"name": "Вовлечённость (ER)", "frac": frac, "weight": weight,
-            "note": f"ER {er:.2f}% (норма {ER_TARGET}%)"}
+    # Раскрываем состав балла: 60% за достижение нормы + 40% за динамику к пр. периоду
+    abs_pts = 0.6 * frac_abs * weight
+    dyn_pts = 0.4 * (frac_dyn if frac_dyn is not None else 0.5) * weight
+    mark = "≥ норма" if er >= ER_TARGET else "< норма"
+    dyn_txt = f"{dyn:+.0f}% к пр." if dyn is not None else "нет пр. периода"
+    note = (f"ER {er:.2f}% ({mark} {ER_TARGET}%) = норма {abs_pts:.0f}/{0.6*weight:.0f} "
+            f"+ динамика {dyn_pts:.0f}/{0.4*weight:.0f} ({dyn_txt})")
+    return {"name": "Вовлечённость (ER)", "frac": frac, "weight": weight, "note": note}
 
 
 def _followers_item(fg, fgp, weight):
@@ -163,13 +173,13 @@ def _activity_ig(content, days, weight):
     """Оценка активности IG по МИКСУ: reels + карусели + посты к нормативу."""
     weeks = days / 7
     reels, carous, posts = _split_content(content)
-    targets = [(len(reels), NORM_REELS * weeks), (len(carous), NORM_CAROUSELS * weeks),
-               (len(posts), NORM_POSTS * weeks)]
+    feed = len(carous) + len(posts)  # лента = карусели + одиночные фото (один тип)
+    targets = [(len(reels), NORM_REELS * weeks), (feed, NORM_FEED * weeks)]
     fracs = [min(f / t, 1.0) if t else 1.0 for f, t in targets]
     frac = sum(fracs) / len(fracs)
     note = (f"Reels {len(reels)}/{round(NORM_REELS*weeks)} · "
-            f"Карусели {len(carous)}/{round(NORM_CAROUSELS*weeks)} · "
-            f"Посты {len(posts)}/{round(NORM_POSTS*weeks)}")
+            f"Посты ленты {feed}/{round(NORM_FEED*weeks)} "
+            f"(карусели {len(carous)} + фото {len(posts)})")
     return {"name": "Активность (микс)", "frac": frac, "weight": weight, "note": note}
 
 

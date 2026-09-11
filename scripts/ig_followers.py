@@ -6,6 +6,7 @@ import time
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
+from secrets_scrub import scrub
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
@@ -60,7 +61,7 @@ def _load_history():
 def _save_history(history):
     os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
     with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+        json.dump(scrub(history), f, ensure_ascii=False, indent=2)
 
 
 def fetch_and_record():
