@@ -113,6 +113,28 @@ def _campaign_key(row: dict) -> str:
     return f"{row.get('_acct','')}|{row.get('campaign_name') or '—'}"
 
 
+def _account_prefixes() -> dict[str, str]:
+    """
+    {первые 9 цифр ad_id: метка кабинета} — по списку объявлений каждого кабинета.
+
+    Нужно для лидов, у которых Salebot прислал id варианта плейсмента («…_Group_1»):
+    такого объекта у Meta нет, инсайты его не содержат, и по ad_id он не находится.
+    Но первые девять цифр id у всех объявлений одного кабинета общие и между
+    кабинетами не пересекаются, так что кабинет определяется однозначно.
+    Без этого лиды белорусского кабинета за 09-10.09.2026 (5 штук) считались
+    «без кампании», и кабинет выглядел как дающий ноль.
+    """
+    out: dict[str, str] = {}
+    for acct, label in ad_accounts():
+        try:
+            rows = _get_all_pages(f"{BASE_URL}/{acct}/ads", {"fields": "id", "limit": 200})
+        except Exception:
+            continue
+        for r in rows:
+            out[str(r["id"])[:9]] = label or acct
+    return out
+
+
 def _ad_to_campaign(ad_rows: list[dict]) -> dict[str, str]:
     """{ad_id: ключ кампании} — по строкам инсайтов уровня объявления."""
     return {str(r["ad_id"]): _campaign_key(r) for r in ad_rows if r.get("ad_id")}
@@ -180,6 +202,7 @@ def collect(day: dt.date) -> dict:
     # в разных кабинетах повторяются. Карту строим по неделе — она покрывает и
     # объявления, остановленные день-два назад.
     ad_map = _ad_to_campaign(ads_week)
+    acct_prefixes = _account_prefixes()
 
     leads_day = sl.load_leads(day, day)
     leads_base = sl.load_leads(base_from, base_to)
@@ -215,14 +238,27 @@ def collect(day: dt.date) -> dict:
     for l in leads_day:
         key = ad_map.get(l["ad_id"])
         if key is None:
-            unmatched += 1
             # Salebot иногда присылает ad_id варианта плейсмента («…_Group_1»),
-            # которого у Meta нет как объекта — привязать можно только по номеру
-            # из названия объявления. Если номера нет, объявление названо плохо.
-            num = l.get("campaign_num")
-            key = (f"|№{num} (объявление не крутится)" if num
-                   else "|объявление без №XXX в названии")
-            e = _slot(key, "", key.split("|", 1)[1])
+            # которого у Meta нет как объекта: инсайты его не содержат и точного
+            # совпадения по ad_id нет. Первые девять цифр id общие для всех
+            # объявлений кабинета и между кабинетами не пересекаются, поэтому
+            # кабинет определяется однозначно; если в нём в этот день крутилась
+            # ровно одна кампания — лид её. Без этого 5 лидов белорусского
+            # кабинета за 09-10.09.2026 считались «без кампании», и кабинет
+            # выглядел как дающий ноль.
+            label = acct_prefixes.get(l["ad_id"][:9], "")
+            same = ([k for k, c in campaigns.items()
+                     if c["acct"] == label and c["spend"] > 0] if label else [])
+            if len(same) == 1:
+                key = same[0]
+                e = campaigns[key]
+            else:
+                unmatched += 1
+                num = l.get("campaign_num")
+                tail = (f"№{num} (объявление не крутится)" if num
+                        else "объявление без №XXX в названии")
+                key = f"{label}|{tail}"
+                e = _slot(key, label, tail)
         else:
             acct, _, name = key.partition("|")
             e = _slot(key, acct, name)
