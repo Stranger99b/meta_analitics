@@ -103,6 +103,28 @@ def _get_all_pages(url, params):
     return results
 
 
+def ad_accounts() -> list[tuple[str, str]]:
+    """
+    Кабинеты для отчётов: [(act_id, метка)].
+
+    Берётся из META_AD_ACCOUNTS вида «act_123:Беларусь,act_456:Личный».
+    Если переменной нет — один кабинет из META_AD_ACCOUNT_ID, как было раньше.
+    Понадобилось 11.09.2026: старый кабинет остановлен, бюджет ушёл в два новых,
+    и отчёт по одному кабинету стал показывать расход 0 при живых лидах.
+    """
+    raw = os.environ.get("META_AD_ACCOUNTS", "").strip()
+    if not raw:
+        return [(AD_ACCOUNT_ID, "")]
+    out = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        acct, _, label = part.partition(":")
+        out.append((acct.strip(), label.strip()))
+    return out
+
+
 def fetch_account_info():
     return _get(f"{BASE_URL}/{AD_ACCOUNT_ID}", {"fields": "name,currency,timezone_name"})
 

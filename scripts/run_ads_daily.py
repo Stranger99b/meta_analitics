@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import salebot_leads as sl
 from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign
-from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, _get_all_pages, \
+from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, ad_accounts, _get_all_pages, \
     CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
 from send_telegram import send_message, redact
 
@@ -75,10 +75,11 @@ CPL_SPIKE_RATIO = 2.0
 _WD = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
 
-def _insights(level: str, fields: str, since: dt.date, until: dt.date) -> list[dict]:
-    """Инсайты за явный диапазон дат (не date_preset — чтобы дата была точной)."""
+def _insights(level: str, fields: str, since: dt.date, until: dt.date,
+              account: str | None = None) -> list[dict]:
+    """Инсайты одного кабинета за явный диапазон дат (не date_preset — чтобы дата была точной)."""
     return _get_all_pages(
-        f"{BASE_URL}/{AD_ACCOUNT_ID}/insights",
+        f"{BASE_URL}/{account or AD_ACCOUNT_ID}/insights",
         {
             "fields": fields,
             "time_range": json.dumps({"since": since.isoformat(), "until": until.isoformat()}),
@@ -86,6 +87,56 @@ def _insights(level: str, fields: str, since: dt.date, until: dt.date) -> list[d
             "limit": 200,
         },
     )
+
+
+def _insights_all(level: str, fields: str, since: dt.date, until: dt.date) -> list[dict]:
+    """То же по ВСЕМ кабинетам; в каждую строку кладём метку кабинета `_acct`."""
+    rows = []
+    for acct, label in ad_accounts():
+        for r in _insights(level, fields, since, until, account=acct):
+            r["_acct"] = label or acct
+            rows.append(r)
+    return rows
+
+
+def _campaign_key(row: dict) -> str:
+    """Ключ кампании = кабинет + имя кампании из самой Meta.
+
+    Раньше кампании склеивались по номеру «№XXX», выдернутому из названия
+    объявления, которое присылает Salebot. С появлением второго и третьего
+    кабинета номера начали повторяться (в обоих новых кампании назывались №001),
+    и разные кампании сливались в одну строку. Имя кампании берём у Meta, а лиды
+    привязываем по ad_id — он уникален глобально и не зависит от того, как назвали
+    объявление.
+    """
+    return f"{row.get('_acct','')}|{row.get('campaign_name') or '—'}"
+
+
+def _ad_to_campaign(ad_rows: list[dict]) -> dict[str, str]:
+    """{ad_id: ключ кампании} — по строкам инсайтов уровня объявления."""
+    return {str(r["ad_id"]): _campaign_key(r) for r in ad_rows if r.get("ad_id")}
+
+
+def _agg(rows: list[dict]) -> dict:
+    """Сводка по строкам инсайтов: расход, показы, клики, messaging-события."""
+    msg = defaultdict(int)
+    for r in rows:
+        for a, v in _actions(r).items():
+            if "messag" in a:
+                msg[a] += v
+    return {
+        "spend": _sum(rows, "spend"),
+        "impressions": int(_sum(rows, "impressions")),
+        "clicks": int(_sum(rows, "clicks")),
+        "messaging": dict(msg),
+        "quality_per_1000": _quality_per_1000(rows),
+    }
+
+
+def _camp_label(c: dict) -> str:
+    """«Беларусь · Дагестан» — кабинет и короткое имя кампании."""
+    name = sl.short_name(c["name"]) or c["name"]
+    return f"{c['acct']} · {name}"[:52] if c["acct"] else name[:52]
 
 
 def _money(v: float) -> str:
@@ -115,42 +166,78 @@ def _sum(rows: list[dict], field: str) -> float:
 
 
 def collect(day: dt.date) -> dict:
-    """Собирает всё за день `day` плюс норму по 7 дням до него."""
+    """Собирает всё за день `day` плюс норму по 7 дням до него, по всем кабинетам."""
     base_from, base_to = day - dt.timedelta(days=7), day - dt.timedelta(days=1)
+    wk_from = day - dt.timedelta(days=6)
 
-    camps_day = _insights("campaign", CAMPAIGN_INSIGHT_FIELDS, day, day)
-    ads_day = _insights("ad", AD_INSIGHT_FIELDS, day, day)
-    camps_base = _insights("campaign", CAMPAIGN_INSIGHT_FIELDS, base_from, base_to)
+    camps_day = _insights_all("campaign", CAMPAIGN_INSIGHT_FIELDS, day, day)
+    camps_base = _insights_all("campaign", CAMPAIGN_INSIGHT_FIELDS, base_from, base_to)
+    camps_week = _insights_all("campaign", CAMPAIGN_INSIGHT_FIELDS, wk_from, day)
+    ads_week = _insights_all("ad", AD_INSIGHT_FIELDS, wk_from, day)
+
+    # Лид привязывается к кампании по ad_id, а не по номеру из названия: номера
+    # в разных кабинетах повторяются. Карту строим по неделе — она покрывает и
+    # объявления, остановленные день-два назад.
+    ad_map = _ad_to_campaign(ads_week)
 
     leads_day = sl.load_leads(day, day)
     leads_base = sl.load_leads(base_from, base_to)
     clients_day = sl.count_new_clients(day, day)
     returning = sl.returning_ad_writers(day)
     clients_base = sl.count_new_clients(base_from, base_to)
-
     _, missing = sl.dump_days_present(day, day)
 
-    msg_actions = defaultdict(int)
+    total = _agg(camps_day)
+    base = _agg(camps_base)
+    per_account = {}
+    for acct, label in ad_accounts():
+        name = label or acct
+        rows = [r for r in camps_day if r.get("_acct") == name]
+        if rows:
+            per_account[name] = _agg(rows)
+
+    campaigns: dict[str, dict] = {}
+
+    def _slot(key: str, acct: str, name: str) -> dict:
+        return campaigns.setdefault(key, {
+            "acct": acct, "name": name, "spend": 0.0, "impressions": 0,
+            "clicks": 0, "leads": 0, "engaged": 0,
+        })
+
     for r in camps_day:
-        for a, v in _actions(r).items():
-            if "messag" in a:
-                msg_actions[a] += v
+        e = _slot(_campaign_key(r), r.get("_acct", ""), r.get("campaign_name") or "—")
+        e["spend"] += float(r.get("spend") or 0)
+        e["impressions"] += int(r.get("impressions") or 0)
+        e["clicks"] += int(r.get("clicks") or 0)
 
-    clicks_base = int(_sum(camps_base, "clicks"))
+    unmatched = 0
+    for l in leads_day:
+        key = ad_map.get(l["ad_id"])
+        if key is None:
+            unmatched += 1
+            # Salebot иногда присылает ad_id варианта плейсмента («…_Group_1»),
+            # которого у Meta нет как объекта — привязать можно только по номеру
+            # из названия объявления. Если номера нет, объявление названо плохо.
+            num = l.get("campaign_num")
+            key = (f"|№{num} (объявление не крутится)" if num
+                   else "|объявление без №XXX в названии")
+            e = _slot(key, "", key.split("|", 1)[1])
+        else:
+            acct, _, name = key.partition("|")
+            e = _slot(key, acct, name)
+        e["leads"] += 1
+        if l["replies"] >= 2:
+            e["engaged"] += 1
 
-    # Скользящая неделя, ВКЛЮЧАЯ отчётный день. Дневной CPL при 2-5 диалогах
-    # шумный — один клиент двигает его на десятки долларов, — поэтому для
-    # решений по бюджету нужен недельный срез.
-    wk_from = day - dt.timedelta(days=6)
-    camps_week = _insights("campaign", CAMPAIGN_INSIGHT_FIELDS, wk_from, day)
-    leads_week = len(sl.load_leads(wk_from, day))
+    clicks_base = base["clicks"]
     spend_week = _sum(camps_week, "spend")
+    leads_week = len(sl.load_leads(wk_from, day))
 
     return {
         "day": day.isoformat(),
-        "spend": _sum(camps_day, "spend"),
-        "impressions": int(_sum(camps_day, "impressions")),
-        "clicks": int(_sum(camps_day, "clicks")),
+        "spend": total["spend"],
+        "impressions": total["impressions"],
+        "clicks": total["clicks"],
         "leads": len(leads_day),
         "returning_ads": returning,
         "week": {
@@ -158,12 +245,13 @@ def collect(day: dt.date) -> dict:
             "spend": spend_week, "leads": leads_week,
             "cpl": (spend_week / leads_week) if leads_week else None,
         },
-        "by_campaign_spend": spend_by_campaign(camps_day),
-        "by_campaign_leads": sl.group_by_campaign(leads_day),
+        "campaigns": campaigns,
+        "per_account": per_account,
+        "leads_without_campaign": unmatched,
         "clients": clients_day,
         "baseline": {
             "from": base_from.isoformat(), "to": base_to.isoformat(),
-            "spend_per_day": _sum(camps_base, "spend") / 7,
+            "spend_per_day": base["spend"] / 7,
             "leads_per_day": len(leads_base) / 7,
             "organic_per_day": clients_base["organic"] / 7,
             "clicks": clicks_base,
@@ -172,13 +260,10 @@ def collect(day: dt.date) -> dict:
             # там, где расход и CTR ещё выглядят нормально. Именно этот показатель
             # вскрыл обвал 22-24.08.2026: 4-6 на 100 кликов → 1.1.
             "leads_per_100_clicks": (100 * len(leads_base) / clicks_base) if clicks_base else 0,
-            "quality_per_1000": _quality_per_1000(camps_base),
-            "by_campaign_spend": spend_by_campaign(camps_base),
-            "by_campaign_leads": sl.group_by_campaign(leads_base),
+            "quality_per_1000": base["quality_per_1000"],
         },
-        "quality_per_1000": _quality_per_1000(camps_day),
-        "meta_messaging": dict(msg_actions),
-        "ads_count": len(ads_day),
+        "quality_per_1000": total["quality_per_1000"],
+        "meta_messaging": total["messaging"],
         "missing_dumps": missing,
     }
 
@@ -219,13 +304,17 @@ def _alerts(d: dict) -> list[str]:
         out.append("Органика упала так же, как реклама — похоже на проблему связки "
                    "Instagram→Salebot, а не на Meta.")
 
-    for num, sp in sorted(d["by_campaign_spend"].items(), key=lambda x: -x[1]["spend"]):
-        got = (d["by_campaign_leads"].get(num) or {}).get("leads", 0)
-        if sp["spend"] >= NO_LEAD_SPEND_ALERT and got == 0:
-            name = sl.short_name(sp["name"]) or f"№{num}"
-            out.append(f"№{num} {html.escape(name)}: {_money(sp['spend'])} без лидов.")
-        if sp["spend"] > 0 and sp["impressions"] == 0:
-            out.append(f"№{num}: расход есть, показов нет — проверить открутку.")
+    for key, c in sorted(d["campaigns"].items(), key=lambda x: -x[1]["spend"]):
+        title = html.escape(_camp_label(c))
+        if c["spend"] >= NO_LEAD_SPEND_ALERT and c["leads"] == 0:
+            out.append(f"{title}: {_money(c['spend'])} без лидов.")
+        if c["spend"] > 0 and c["impressions"] == 0:
+            out.append(f"{title}: расход есть, показов нет — проверить открутку.")
+
+    if d.get("leads_without_campaign"):
+        out.append(f"{d['leads_without_campaign']} лид(ов) без привязки к кампании — "
+                   f"у объявления нет номера «№XXX» в названии либо оно уже не крутится. "
+                   f"Salebot присылает имя ОБЪЯВЛЕНИЯ, а не кампании.")
 
     if d["missing_dumps"]:
         out.append(f"Нет выгрузки Salebot за {', '.join(d['missing_dumps'])} — "
@@ -267,23 +356,23 @@ def render(d: dict) -> str:
         L.append("\n⚠️ <b>Тревоги</b>")
         L += [f"• {a}" for a in alerts]
 
-    rows = sorted(
-        set(d["by_campaign_spend"]) | set(d["by_campaign_leads"]),
-        key=lambda n: -d["by_campaign_spend"].get(n, {}).get("spend", 0),
-    )
+    rows = sorted(d["campaigns"].items(), key=lambda x: (-x[1]["spend"], -x[1]["leads"]))
     if rows:
         L.append("\n<b>По кампаниям</b>")
-        for num in rows:
-            sp = d["by_campaign_spend"].get(num, {})
-            f = d["by_campaign_leads"].get(num) or sl._blank_funnel()
-            spend = sp.get("spend", 0.0)
-            name = sl.short_name(f["title"] or sp.get("name", "")) or f"кампания №{num}"
-            c = f"{_money(spend / f['leads'])}" if f["leads"] and spend else "—"
-            L.append(f"• <b>№{num}</b> {html.escape(name)[:38]} — {_money(spend)} · "
-                     f"{f['leads']} лид. · CPL {c}"
-                     + (f" · 💬{f['engaged']}" if f["engaged"] else ""))
+        for key, c in rows:
+            cpl = _money(c["spend"] / c["leads"]) if c["leads"] and c["spend"] else "—"
+            L.append(f"• {html.escape(_camp_label(c))} — {_money(c['spend'])} · "
+                     f"{c['leads']} лид. · CPL {cpl}"
+                     + (f" · 💬{c['engaged']}" if c["engaged"] else ""))
 
     L.append("\n🔌 <b>Что отдаёт Meta</b>")
+    if len(d.get("per_account") or {}) > 1:
+        for acct, a in sorted(d["per_account"].items(), key=lambda x: -x[1]["spend"]):
+            started = a["messaging"].get(
+                "onsite_conversion.messaging_conversation_started_7d", 0)
+            L.append(f"· <b>{html.escape(acct)}</b>: {_money(a['spend'])} · "
+                     f"показы {a['impressions']:,}".replace(",", " ")
+                     + f" · переписки {started if started else '⛔'}")
     ctr = 100 * d["clicks"] / d["impressions"] if d["impressions"] else 0
     L.append(f"показы {d['impressions']:,}".replace(",", " ")
              + f" · клики {d['clicks']} · CTR {ctr:.2f}%")
