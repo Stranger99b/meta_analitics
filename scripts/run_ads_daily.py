@@ -52,7 +52,7 @@ import salebot_leads as sl
 from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign
 from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, _get_all_pages, \
     CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
-from send_telegram import send_message
+from send_telegram import send_message, redact
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 ARCHIVE_DIR = os.path.join(DATA_DIR, "ads_daily")
@@ -321,7 +321,7 @@ def main():
             send_message(text, parse_mode="HTML")
             print(f"[run_ads_daily] Отправлено за {day}.")
     except Exception:
-        err = traceback.format_exc()
+        err = redact(traceback.format_exc())
         print(f"[run_ads_daily] ERROR:\n{err}", file=sys.stderr)
         if not args.dry_run:
             try:

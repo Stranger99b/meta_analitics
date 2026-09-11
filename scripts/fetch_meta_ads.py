@@ -35,11 +35,40 @@ TIMEOUT = 60
 MAX_RETRIES = 3
 
 
+class MetaAPIError(RuntimeError):
+    """Ошибка Meta API с человеческим текстом и БЕЗ токена.
+
+    requests кладёт в текст HTTPError весь URL запроса, а токен едет в query-строке,
+    поэтому голый raise_for_status() и утекает секрет, и не показывает причину:
+    в теле ответа лежит вменяемое объяснение, а в исключении — только «400 Bad Request».
+    """
+
+
+def _raise_for_status(r):
+    if r.status_code < 400:
+        return
+    try:
+        e = r.json().get("error", {}) or {}
+    except Exception:
+        e = {}
+    msg = e.get("message") or (r.text or "")[:200]
+    code, sub = e.get("code"), e.get("error_subcode")
+    hint = ""
+    if code == 190:
+        hint = ("  → Токен Meta недействителен. Получить новый и применить: "
+                "python3 scripts/update_token.py НОВЫЙ_ТОКЕН")
+    raise MetaAPIError(
+        f"Meta API {r.status_code}"
+        + (f" (code {code}" + (f"/{sub}" if sub else "") + ")" if code else "")
+        + f": {msg}{hint}"
+    )
+
+
 def _get(url, params, _retry=0):
     params = dict(params, access_token=ACCESS_TOKEN)
     try:
         r = requests.get(url, params=params, timeout=TIMEOUT)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json()
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
         if _retry < MAX_RETRIES:
@@ -53,7 +82,7 @@ def _get(url, params, _retry=0):
 def _get_page(url, _retry=0):
     try:
         r = requests.get(url, timeout=TIMEOUT)
-        r.raise_for_status()
+        _raise_for_status(r)
         return r.json()
     except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
         if _retry < MAX_RETRIES:

@@ -1,6 +1,7 @@
 """Sends text to Telegram via bot."""
 
 import os
+import re
 import requests
 from dotenv import load_dotenv
 
@@ -12,6 +13,24 @@ CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 MAX_MSG_LEN = 4000  # under Telegram's 4096 hard limit, leaves headroom
+
+# Секреты в исходящих сообщениях. Повод: 10.09.2026 дневной отчёт упал на HTTP 400
+# от Meta, requests положил в текст HTTPError весь URL запроса — вместе с
+# access_token в query-строке, — и обработчик ошибки отправил это в чат.
+# Чистим здесь, в единственной точке выхода, чтобы не зависеть от дисциплины
+# каждого вызывающего.
+_SECRET_PATTERNS = [
+    (re.compile(r"(access_token=)[^&\s\"']+"), r"\1***"),
+    (re.compile(r"\bEAA[A-Za-z0-9_-]{20,}"), "EAA***"),          # токены Meta
+    (re.compile(r"\b\d{8,}:[A-Za-z0-9_-]{30,}"), "***:***"),      # токены Telegram-ботов
+]
+
+
+def redact(text: str) -> str:
+    """Убирает из текста токены — и Meta, и Telegram."""
+    for rx, repl in _SECRET_PATTERNS:
+        text = rx.sub(repl, text)
+    return text
 
 
 def _split_message(text: str, limit: int = MAX_MSG_LEN) -> list[str]:
@@ -50,7 +69,7 @@ def send_message(text: str, chat_id: str = CHAT_ID, parse_mode: str | None = Non
     400 "can't parse entities" error. message_thread_id targets a forum topic in a
     supergroup (None = обычный чат / General).
     """
-    chunks = _split_message(text)
+    chunks = _split_message(redact(text))
     for chunk in chunks:
         payload = {"chat_id": chat_id, "text": chunk}
         if parse_mode:
@@ -70,7 +89,7 @@ def send_document(content: str, filename: str, chat_id: str = CHAT_ID,
     """Отправляет текстовый файл (CSV/Markdown/…) как документ в чат/тему."""
     data = {"chat_id": chat_id}
     if caption:
-        data["caption"] = caption
+        data["caption"] = redact(caption)
     if parse_mode:
         data["parse_mode"] = parse_mode
     if message_thread_id:
@@ -89,7 +108,7 @@ def send_bytes(content: bytes, filename: str, chat_id: str = CHAT_ID,
     """Отправляет бинарный файл (PDF/…) как документ в чат/тему."""
     data = {"chat_id": chat_id}
     if caption:
-        data["caption"] = caption
+        data["caption"] = redact(caption)
     if message_thread_id:
         data["message_thread_id"] = message_thread_id
     files = {"document": (filename, content, mime)}
