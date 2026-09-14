@@ -7,6 +7,7 @@ THREADS_ACCESS_TOKEN). Тянет аккаунт-инсайты за текущ�
 """
 import os
 import json
+import time
 import datetime
 import requests
 from dotenv import load_dotenv
@@ -26,15 +27,30 @@ MEDIA_METRICS = "views,likes,replies,reposts,quotes,shares"
 MIN_TS = 1712991600
 
 
-def _get(path, params=None):
+def _get(path, params=None, retries=3):
+    """GET к Threads API с ретраем на сетевые ошибки/таймауты.
+
+    graph.threads.net иногда отвечает медленно (был ReadTimeout 30с → падал весь
+    дайджест по крону). Повторяем сетевые сбои с нарастающей паузой; ошибки самого
+    API (в теле "error") не ретраим — это не транзиентно.
+    """
     p = {"access_token": TOKEN}
     if params:
         p.update(params)
-    r = requests.get(f"{BASE}/{path}", params=p, timeout=30)
-    d = r.json()
-    if "error" in d:
-        raise RuntimeError(f"{path}: {d['error'].get('message')}")
-    return d
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = requests.get(f"{BASE}/{path}", params=p, timeout=60)
+            d = r.json()
+            if "error" in d:
+                raise RuntimeError(f"{path}: {d['error'].get('message')}")
+            return d
+        except (requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError) as e:
+            last = e
+            if attempt < retries:
+                time.sleep(attempt * 5)  # 5с, 10с
+    raise RuntimeError(f"{path}: сеть недоступна после {retries} попыток ({last})")
 
 
 def _ts(d):
