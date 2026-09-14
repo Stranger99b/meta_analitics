@@ -135,6 +135,20 @@ def _reach_ft_block(data):
     return out
 
 
+def _story_reach_ft(data):
+    """Строка для блока сторис: охват сторис по подписке (уник., 100% органика)."""
+    ft = data.get("reach_ft") or {}
+    fol = ft.get("story_follower") or 0
+    non = ft.get("story_non_follower") or 0
+    tot = fol + non
+    if tot == 0:
+        return []
+    return [Paragraph(
+        f'{E("people")}Охват сторис (уник.): подписчики <b>{_f(fol)}</b> '
+        f'({fol/tot*100:.0f}%) · не-подписчики <b>{_f(non)}</b> ({non/tot*100:.0f}%) — '
+        f'сторис видят почти только свои', ST_CAP)]
+
+
 def _metric_table(pairs, tw, tp, width):
     rows = [[Paragraph(lbl, ST_LBL),
              Paragraph(f"<b>{_f(tw.get(k))}</b>{_trend(tw.get(k), tp.get(k))}", ST_VAL)]
@@ -304,6 +318,7 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
         D.append(Paragraph(
             f'{E("eye")}Просмотры <b>{_f(views)}</b> (ср. {_f(round(views/n))}) · '
             f'{E("target")}охват {_f(_s("reach"))}', ST_BODY))
+        D += _story_reach_ft(data)
         D.append(Paragraph(
             f'{E("person")}Визиты профиля <b>{_f(_s("profile_visits"))}</b> · '
             f'{E("plus")}подписки <b>{_f(_s("follows"))}</b> · ответы {_f(_s("replies"))} · '
@@ -426,7 +441,7 @@ def _content_block(content, title, limit, W):
     return out
 
 
-def _stories_block(stories, W, sheet_url=""):
+def _stories_block(stories, W, sheet_url="", reach_ft=None):
     out = [Paragraph(E("camera") + "Сторис", ST_H2)]
     if not stories:
         out.append(Paragraph("Данных за период нет (база копится ежедневно).", ST_BODY))
@@ -440,6 +455,7 @@ def _stories_block(stories, W, sheet_url=""):
     out.append(Paragraph(
         f'{E("eye")}Просмотры <b>{_f(views)}</b> (ср. {_f(round(views/n))}) · '
         f'{E("target")}охват {_f(_s("reach"))}', ST_BODY))
+    out += _story_reach_ft({"reach_ft": reach_ft})
     out.append(Paragraph(
         f'{E("person")}Визиты профиля <b>{_f(_s("profile_visits"))}</b> · '
         f'{E("plus")}подписки <b>{_f(_s("follows"))}</b> · '
@@ -649,7 +665,7 @@ def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
     D.append(_metric_table([("Лайки", "likes"), ("Комментарии", "comments"),
                             ("Сохранения", "saves"), ("Репосты", "shares")], tm, tp, W))
     D += _content_block(data.get("content", []), "Топ публикаций месяца", 10, W)
-    D += _stories_block(data.get("stories", []), W, sheet_url)
+    D += _stories_block(data.get("stories", []), W, sheet_url, data.get("reach_ft"))
     D += _compare_block(data.get("content", []), data.get("stories", []), W)
     if ai_text:
         D += _ai_block(ai_text, "Оценка и рекомендации (AI)")

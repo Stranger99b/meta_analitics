@@ -107,6 +107,11 @@ def build_digest(data) -> str:
     note = f"данные копятся с {data['stories_earliest']}" if data.get("stories_earliest") else ""
     S.append("")
     S.append(icc.render_stories(stories, note))
+    _ft = data.get("reach_ft") or {}
+    _sf, _sn = _ft.get("story_follower") or 0, _ft.get("story_non_follower") or 0
+    if _sf + _sn:
+        S.append(f"Охват сторис (уник.): подписчики {rf.fmt(_sf)} ({_sf/(_sf+_sn)*100:.0f}%) · "
+                 f"не-подписчики {rf.fmt(_sn)} ({_sn/(_sf+_sn)*100:.0f}%)")
 
     # Сравнение типов
     S.append("")

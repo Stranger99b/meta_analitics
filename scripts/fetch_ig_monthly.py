@@ -52,7 +52,8 @@ def _totals_ranged(start, end):
 
 def _reach_ft_ranged(start, end):
     """Охват подписчики/не-подписчики за период (органика + AD), сумма по 30-дн окнам."""
-    agg = {"follower": 0, "non_follower": 0, "ad_follower": 0, "ad_non_follower": 0}
+    agg = {"follower": 0, "non_follower": 0, "ad_follower": 0, "ad_non_follower": 0,
+           "story_follower": 0, "story_non_follower": 0}
     got = False
     for a, b in _chunks(start, end):
         r = fiw._reach_follow_type(a, b)

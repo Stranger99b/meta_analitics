@@ -68,26 +68,27 @@ def _reach_follow_type(since, until):
             "breakdown": "media_product_type,follow_type",
             "since": _ts(since), "until": _ts(until)})
         tv = (d.get("data") or [{}])[0].get("total_value", {})
-        fol = non = ad_fol = ad_non = 0
+        fol = non = ad_fol = ad_non = st_fol = st_non = 0
         got = False
         for b in tv.get("breakdowns", []):
             for res in b.get("results", []):
                 surf, ft = res.get("dimension_values", ["", ""])
                 val = res.get("value", 0)
+                is_fol = ft == "FOLLOWER"
                 if surf == "AD":
                     got = True
-                    if ft == "FOLLOWER":
-                        ad_fol += val
-                    else:
-                        ad_non += val
+                    ad_fol += val if is_fol else 0
+                    ad_non += 0 if is_fol else val
                 elif surf in ORGANIC_SURFACES:
                     got = True
-                    if ft == "FOLLOWER":
-                        fol += val
-                    else:
-                        non += val
+                    fol += val if is_fol else 0
+                    non += 0 if is_fol else val
+                    if surf == "STORY":  # отдельно для блока сторис
+                        st_fol += val if is_fol else 0
+                        st_non += 0 if is_fol else val
         return {"follower": fol, "non_follower": non,
-                "ad_follower": ad_fol, "ad_non_follower": ad_non} if got else None
+                "ad_follower": ad_fol, "ad_non_follower": ad_non,
+                "story_follower": st_fol, "story_non_follower": st_non} if got else None
     except Exception:  # noqa: BLE001
         return None
 
