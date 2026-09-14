@@ -50,6 +50,19 @@ def _totals_ranged(start, end):
     return agg
 
 
+def _reach_ft_ranged(start, end):
+    """Охват подписчики/не-подписчики за период (органика + AD), сумма по 30-дн окнам."""
+    agg = {"follower": 0, "non_follower": 0, "ad_follower": 0, "ad_non_follower": 0}
+    got = False
+    for a, b in _chunks(start, end):
+        r = fiw._reach_follow_type(a, b)
+        if r:
+            for k in agg:
+                agg[k] += r.get(k, 0)
+            got = True
+    return agg if got else None
+
+
 def _follower_growth_ranged(start, end):
     total = 0
     got = False
@@ -161,6 +174,8 @@ def fetch_and_save(target=None):
         "profile": profile,
         "totals_month": _totals_ranged(m_start, m_end),
         "totals_prev": _totals_ranged(p_start, p_end),
+        "reach_ft": _reach_ft_ranged(m_start, m_end),
+        "reach_ft_prev": _reach_ft_ranged(p_start, p_end),
         "follower_growth_month": fg_month,
         "follower_growth_prev": fg_prev,
         "follower_growth_source": fg_month_src,

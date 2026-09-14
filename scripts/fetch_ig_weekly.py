@@ -51,6 +51,47 @@ def _totals(since, until):
             for row in d.get("data", [])}
 
 
+# Органические поверхности (без рекламы AD) — охват SMM считаем только по ним
+ORGANIC_SURFACES = {"POST", "REEL", "CAROUSEL_CONTAINER", "STORY"}
+
+
+def _reach_follow_type(since, until):
+    """Охват с разбивкой подписчики/не-подписчики, ОТДЕЛЬНО органика и реклама.
+
+    Account-level reach раздут платной рекламой (AD даёт почти весь охват на
+    не-подписчиков). Считаем органику (работа SMM) и рекламу (AD) по отдельности,
+    чтобы разница была видна. Возвращает {follower, non_follower, ad_follower,
+    ad_non_follower} (follower/non_follower — ОРГАНИКА) или None."""
+    try:
+        d = _get(f"{IG_ID}/insights", {
+            "metric": "reach", "period": "day", "metric_type": "total_value",
+            "breakdown": "media_product_type,follow_type",
+            "since": _ts(since), "until": _ts(until)})
+        tv = (d.get("data") or [{}])[0].get("total_value", {})
+        fol = non = ad_fol = ad_non = 0
+        got = False
+        for b in tv.get("breakdowns", []):
+            for res in b.get("results", []):
+                surf, ft = res.get("dimension_values", ["", ""])
+                val = res.get("value", 0)
+                if surf == "AD":
+                    got = True
+                    if ft == "FOLLOWER":
+                        ad_fol += val
+                    else:
+                        ad_non += val
+                elif surf in ORGANIC_SURFACES:
+                    got = True
+                    if ft == "FOLLOWER":
+                        fol += val
+                    else:
+                        non += val
+        return {"follower": fol, "non_follower": non,
+                "ad_follower": ad_fol, "ad_non_follower": ad_non} if got else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _follower_growth(since, until):
     try:
         d = _get(f"{IG_ID}/insights", {
@@ -114,6 +155,8 @@ def fetch_and_save():
         "totals_prev": _totals(prev_start, w_start),
         "follower_growth_week": _follower_growth(w_start, today),
         "follower_growth_prev": _follower_growth(prev_start, w_start),
+        "reach_ft": _reach_follow_type(w_start, today),
+        "reach_ft_prev": _reach_follow_type(prev_start, w_start),
         "content": _content_since(w_start),
     }
 

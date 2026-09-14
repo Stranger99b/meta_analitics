@@ -46,6 +46,16 @@ def build_digest(data) -> str:
     S.append(rf.line("Просмотры профиля", tw.get("profile_views"), tp.get("profile_views")))
     S.append(rf.line("Вовлечено аккаунтов", tw.get("accounts_engaged"),
                      tp.get("accounts_engaged")))
+    ft = data.get("reach_ft")
+    if ft and (ft.get("follower") or ft.get("non_follower")):
+        fol, non = ft.get("follower") or 0, ft.get("non_follower") or 0
+        S.append(f"Органический охват (SMM): подписчики {rf.fmt(fol)} · не-подписчики "
+                 f"{rf.fmt(non)} ({non/(fol+non)*100:.0f}% новой аудитории)")
+        ad_tot = (ft.get("ad_follower") or 0) + (ft.get("ad_non_follower") or 0)
+        if ad_tot:
+            adn = ft.get("ad_non_follower") or 0
+            S.append(f"Охват из рекламы (AD): всего {rf.fmt(ad_tot)} · не-подписчики "
+                     f"{rf.fmt(adn)} ({adn/ad_tot*100:.0f}%)")
 
     # Вовлечённость
     S.append("")

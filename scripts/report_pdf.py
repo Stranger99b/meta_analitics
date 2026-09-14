@@ -95,6 +95,46 @@ def _trend(cur, prev):
     return f' <font color="{col}">{"▲" if p >= 0 else "▼"}{abs(p):.0f}%</font>'
 
 
+def _reach_ft_block(data):
+    """Строка органического охвата: подписчики / не-подписчики + доля новой аудитории.
+
+    Только органика (посты, reels, карусели, сторис); реклама (AD) исключена, иначе
+    охват раздут платным трафиком и не отражает работу SMM."""
+    ft = data.get("reach_ft")
+    if not ft:
+        return []
+    fol, non = ft.get("follower") or 0, ft.get("non_follower") or 0
+    tot = fol + non
+    if tot == 0:
+        return []
+    share = non / tot * 100
+    prev = data.get("reach_ft_prev") or {}
+    ptot = (prev.get("follower") or 0) + (prev.get("non_follower") or 0)
+    trend = ""
+    if ptot:
+        pshare = (prev.get("non_follower") or 0) / ptot * 100
+        trend = _trend(round(share, 1), round(pshare, 1))
+    out = [Paragraph(
+        f'{E("people")}Органический охват (SMM): подписчики <b>{_f(fol)}</b> · '
+        f'не-подписчики <b>{_f(non)}</b> · новая аудитория <b>{share:.0f}%</b>{trend}',
+        ST_BODY)]
+    ad_fol = ft.get("ad_follower") or 0
+    ad_non = ft.get("ad_non_follower") or 0
+    ad_tot = ad_fol + ad_non
+    if ad_tot:
+        ad_share = ad_non / ad_tot * 100
+        out.append(Paragraph(
+            f'{E("chart")}Охват из рекламы (AD): всего <b>{_f(ad_tot)}</b> · '
+            f'не-подписчики <b>{_f(ad_non)}</b> ({ad_share:.0f}%) · подписчики {_f(ad_fol)}',
+            ST_BODY))
+    out.append(Paragraph(
+        "<b>Органика</b> — работа SMM (охватывает в основном подписчиков). "
+        "<b>Реклама (AD)</b> — платный охват, идёт в основном на новую аудиторию. "
+        "«Новая аудитория» — доля охвата на не-подписчиков.",
+        ST_CAP))
+    return out
+
+
 def _metric_table(pairs, tw, tp, width):
     rows = [[Paragraph(lbl, ST_LBL),
              Paragraph(f"<b>{_f(tw.get(k))}</b>{_trend(tw.get(k), tp.get(k))}", ST_VAL)]
@@ -203,6 +243,7 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
     D.append(_metric_table([("Просмотры", "views"), ("Охват", "reach"),
                             ("Просмотры профиля", "profile_views"),
                             ("Вовлечено аккаунтов", "accounts_engaged")], tw, tp, W))
+    D += _reach_ft_block(data)
 
     D.append(Paragraph(E("heart") + "Вовлечённость", ST_H2))
     D.append(_metric_table([("Лайки", "likes"), ("Комментарии", "comments"),
@@ -603,6 +644,7 @@ def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
     D.append(_metric_table([("Просмотры", "views"), ("Охват", "reach"),
                             ("Просмотры профиля", "profile_views"),
                             ("Вовлечено аккаунтов", "accounts_engaged")], tm, tp, W))
+    D += _reach_ft_block(data)
     D.append(Paragraph(E("heart") + "Вовлечённость", ST_H2))
     D.append(_metric_table([("Лайки", "likes"), ("Комментарии", "comments"),
                             ("Сохранения", "saves"), ("Репосты", "shares")], tm, tp, W))
