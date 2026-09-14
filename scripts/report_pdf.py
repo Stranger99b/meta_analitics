@@ -143,18 +143,30 @@ def _reach_ft_block(data):
     return out
 
 
-def _story_reach_ft(data):
-    """Строка для блока сторис: охват сторис по подписке (уник., 100% органика)."""
-    ft = data.get("reach_ft") or {}
+def _story_reach_line(reach_ft, summed_reach):
+    """Охват сторис: УНИКАЛЬНЫЙ (дедуп) + разбивка подписчики/не-подписчики.
+
+    Важно не путать с суммой охватов по каждой сторис (с повторами: один человек
+    видит много сторис). Заглавным даём уникальный охват — разбивка сходится с ним.
+    Fallback на суммарный, если уник. недоступен."""
+    ft = reach_ft or {}
     fol = ft.get("story_follower") or 0
     non = ft.get("story_non_follower") or 0
     tot = fol + non
     if tot == 0:
+        if summed_reach:
+            return [Paragraph(
+                f'{E("target")}Охват по сторис (сумма, с повторами): '
+                f'<b>{_f(summed_reach)}</b>', ST_BODY)]
         return []
-    return [Paragraph(
-        f'{E("people")}Охват сторис (уник.): подписчики <b>{_f(fol)}</b> '
-        f'({fol/tot*100:.0f}%) · не-подписчики <b>{_f(non)}</b> ({non/tot*100:.0f}%) — '
-        f'сторис видят почти только свои', ST_CAP)]
+    return [
+        Paragraph(
+            f'{E("target")}Охват (уник. людей): <b>{_f(tot)}</b> · '
+            f'подписчики <b>{_f(fol)}</b> ({fol/tot*100:.0f}%) · '
+            f'не-подписчики <b>{_f(non)}</b> ({non/tot*100:.0f}%)', ST_BODY),
+        Paragraph(
+            "Охват — уникальные люди за период (дедуп). «Просмотры» — показы с повторами "
+            "(один человек видит несколько сторис).", ST_CAP)]
 
 
 def _metric_table(pairs, tw, tp, width):
@@ -324,9 +336,9 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
         views = _s("views")
         D.append(Paragraph(f'{E("memo")}Сторис за период: <b>{n}</b>', ST_BODY))
         D.append(Paragraph(
-            f'{E("eye")}Просмотры <b>{_f(views)}</b> (ср. {_f(round(views/n))}) · '
-            f'{E("target")}охват {_f(_s("reach"))}', ST_BODY))
-        D += _story_reach_ft(data)
+            f'{E("eye")}Просмотры (показы) <b>{_f(views)}</b> · '
+            f'ср. {_f(round(views/n))} на сторис', ST_BODY))
+        D += _story_reach_line(data.get("reach_ft"), _s("reach"))
         D.append(Paragraph(
             f'{E("person")}Визиты профиля <b>{_f(_s("profile_visits"))}</b> · '
             f'{E("plus")}подписки <b>{_f(_s("follows"))}</b> · ответы {_f(_s("replies"))} · '
@@ -461,9 +473,9 @@ def _stories_block(stories, W, sheet_url="", reach_ft=None):
     views = _s("views")
     out.append(Paragraph(f'{E("memo")}Сторис за период: <b>{n}</b>', ST_BODY))
     out.append(Paragraph(
-        f'{E("eye")}Просмотры <b>{_f(views)}</b> (ср. {_f(round(views/n))}) · '
-        f'{E("target")}охват {_f(_s("reach"))}', ST_BODY))
-    out += _story_reach_ft({"reach_ft": reach_ft})
+        f'{E("eye")}Просмотры (показы) <b>{_f(views)}</b> · '
+        f'ср. {_f(round(views/n))} на сторис', ST_BODY))
+    out += _story_reach_line(reach_ft, _s("reach"))
     out.append(Paragraph(
         f'{E("person")}Визиты профиля <b>{_f(_s("profile_visits"))}</b> · '
         f'{E("plus")}подписки <b>{_f(_s("follows"))}</b> · '

@@ -104,8 +104,9 @@ def build_digest(data) -> str:
     _ft = data.get("reach_ft") or {}
     _sf, _sn = _ft.get("story_follower") or 0, _ft.get("story_non_follower") or 0
     if _sf + _sn:
-        S.append(f"Охват сторис (уник.): подписчики {rf.fmt(_sf)} ({_sf/(_sf+_sn)*100:.0f}%) · "
-                 f"не-подписчики {rf.fmt(_sn)} ({_sn/(_sf+_sn)*100:.0f}%)")
+        _st = _sf + _sn
+        S.append(f"Охват сторис (уник. людей): {rf.fmt(_st)} · подписчики {rf.fmt(_sf)} "
+                 f"({_sf/_st*100:.0f}%) · не-подписчики {rf.fmt(_sn)} ({_sn/_st*100:.0f}%)")
     S.append("")
     S.append(icc.render_compare(icc.compare(data.get("content", []), stories)))
 

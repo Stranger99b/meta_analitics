@@ -167,7 +167,8 @@ def render_stories(stories, note: str = "", full: bool = False) -> str:
     def _s(metric):
         return sum((s.get("insights", {}).get(metric) or 0) for s in stories)
     views, reach = _s("views"), _s("reach")
-    L.append(f"📄 Всего {n} · 👁 {_f(views)} (ср. {_f(round(views/n))}) · 🎯 {_f(reach)}")
+    L.append(f"📄 Всего {n} · 👁 {_f(views)} показов (ср. {_f(round(views/n))}) · "
+             f"🎯 охват с повторами {_f(reach)}")
     L.append(f"👤 профиль {_f(_s('profile_visits'))} · ➕ подписки {_f(_s('follows'))} · "
              f"💬 ответы {_f(_s('replies'))} · ↗️ репосты {_f(_s('shares'))}")
 
