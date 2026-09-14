@@ -93,6 +93,52 @@ def _reach_follow_type(since, until):
         return None
 
 
+def _ad_reach_placements(since, until):
+    """Охват Instagram-рекламы по плейсментам за период (сумма по всем ad-кабинетам).
+
+    IG-инсайты дают только общий бакет AD без разбивки по плейсментам — детализация
+    (сторис/лента/reels) есть только в Meta Ads (Marketing) API. Возвращает
+    {stories, feed, reels, explore, other} или None."""
+    try:
+        import json as _json
+        import fetch_meta_ads as fma
+    except Exception:  # noqa: BLE001
+        return None
+    buckets = {"stories": 0, "feed": 0, "reels": 0, "explore": 0, "other": 0}
+    got = False
+    try:
+        accts = fma.ad_accounts()
+    except Exception:  # noqa: BLE001
+        accts = [(fma.AD_ACCOUNT_ID, "")]
+    for act, _label in accts:
+        try:
+            d = fma._get(f"{fma.BASE_URL}/{act}/insights", {
+                "fields": "reach", "level": "account",
+                "breakdowns": "publisher_platform,platform_position",
+                "time_range": _json.dumps({"since": str(since), "until": str(until)})})
+        except Exception:  # noqa: BLE001
+            continue
+        for row in d.get("data", []):
+            if row.get("publisher_platform") != "instagram":
+                continue
+            pos = row.get("platform_position", "") or ""
+            reach = int(row.get("reach") or 0)
+            if reach == 0:
+                continue
+            got = True
+            if "stories" in pos:
+                buckets["stories"] += reach
+            elif "reels" in pos:
+                buckets["reels"] += reach
+            elif "explore" in pos:
+                buckets["explore"] += reach
+            elif "feed" in pos:
+                buckets["feed"] += reach
+            else:
+                buckets["other"] += reach
+    return buckets if got else None
+
+
 def _follower_growth(since, until):
     try:
         d = _get(f"{IG_ID}/insights", {
@@ -158,6 +204,7 @@ def fetch_and_save():
         "follower_growth_prev": _follower_growth(prev_start, w_start),
         "reach_ft": _reach_follow_type(w_start, today),
         "reach_ft_prev": _reach_follow_type(prev_start, w_start),
+        "ad_placements": _ad_reach_placements(w_start, today),
         "content": _content_since(w_start),
     }
 

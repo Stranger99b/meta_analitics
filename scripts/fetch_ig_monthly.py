@@ -177,6 +177,7 @@ def fetch_and_save(target=None):
         "totals_prev": _totals_ranged(p_start, p_end),
         "reach_ft": _reach_ft_ranged(m_start, m_end),
         "reach_ft_prev": _reach_ft_ranged(p_start, p_end),
+        "ad_placements": fiw._ad_reach_placements(m_start, m_end),
         "follower_growth_month": fg_month,
         "follower_growth_prev": fg_prev,
         "follower_growth_source": fg_month_src,

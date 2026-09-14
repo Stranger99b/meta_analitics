@@ -51,6 +51,12 @@ def build_digest(data) -> str:
             adn = ft.get("ad_non_follower") or 0
             S.append(f"Охват из рекламы (AD): всего {rf.fmt(ad_tot)} · не-подписчики "
                      f"{rf.fmt(adn)} ({adn/ad_tot*100:.0f}%)")
+    pl = data.get("ad_placements") or {}
+    _pp = [(k, ru) for k, ru in (("stories", "сторис"), ("feed", "лента"),
+           ("reels", "reels"), ("explore", "explore"), ("other", "прочее")) if pl.get(k)]
+    if _pp:
+        S.append("Реклама по плейсментам (охват): " +
+                 " · ".join(f"{ru} {rf.fmt(pl[k])}" for k, ru in _pp))
 
     S.append("")
     S.append(rf.b("Вовлечённость"))

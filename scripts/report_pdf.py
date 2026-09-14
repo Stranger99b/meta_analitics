@@ -127,6 +127,14 @@ def _reach_ft_block(data):
             f'{E("chart")}Охват из рекламы (AD): всего <b>{_f(ad_tot)}</b> · '
             f'не-подписчики <b>{_f(ad_non)}</b> ({ad_share:.0f}%) · подписчики {_f(ad_fol)}',
             ST_BODY))
+    pl = data.get("ad_placements") or {}
+    order = [("stories", "сторис"), ("feed", "лента"), ("reels", "reels"),
+             ("explore", "explore"), ("other", "прочее")]
+    parts = [f'{ru} <b>{_f(pl[k])}</b>' for k, ru in order if pl.get(k)]
+    if parts:
+        out.append(Paragraph(
+            f'{E("chart")}Реклама по плейсментам (охват): ' + " · ".join(parts),
+            ST_BODY))
     out.append(Paragraph(
         "<b>Органика</b> — работа SMM (охватывает в основном подписчиков). "
         "<b>Реклама (AD)</b> — платный охват, идёт в основном на новую аудиторию. "
