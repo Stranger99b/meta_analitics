@@ -196,6 +196,60 @@ def _wrote_on(rec: dict, day: dt.date) -> bool:
     return False
 
 
+def _own_message_times(rec: dict) -> list[dt.datetime]:
+    """Времена собственных сообщений клиента (тот же фильтр, что в _wrote_on)."""
+    h = rec.get("history_json") or []
+    if isinstance(h, str):
+        try:
+            h = json.loads(h) if h.strip() else []
+        except Exception:
+            return []
+    out = []
+    for m in h:
+        if (m.get("client_replica") and m.get("message_from_outside") in (0, None)
+                and isinstance(m.get("text"), str) and m["text"].strip()
+                and not m["text"].startswith("change_responsible")):
+            try:
+                out.append(dt.datetime.fromisoformat(str(m.get("created_at"))[:19]))
+            except Exception:
+                pass
+    return sorted(out)
+
+
+def returning_ad_starters(day: dt.date, accept, tail_days: int = 1) -> int:
+    """
+    Старые клиенты, которых Meta посчитала бы «начатой перепиской» в этот день.
+
+    Метрика Meta `messaging_conversation_started_7d` засчитывает сообщение после
+    7+ дней тишины — в том числе от клиента, который давно есть в базе. Отчёт же
+    называет лидом только НОВОГО клиента. Эта функция считает разницу: клиент
+    создан раньше `day`, писал в `day`, а его предыдущее собственное сообщение было
+    7+ дней назад (или его не было вовсе). `accept(ad_id) -> bool` отбирает метки
+    только тех кабинетов, реклама которых могла дать клик.
+
+    Сверено на 14.09.2026: 8 таких клиентов; 28 новых + 8 = 36 при 39 переписках,
+    которые Meta засчитала «по клику». Разница в 3 — в пределах расхождения определений.
+    Служебные записи `change_responsible…` Salebot помечает как реплику клиента — они
+    отсеиваются: без этого фильтра выходило 11, но трое из них клиентами не писали.
+    """
+    n = 0
+    for rec in _load_records(day, day, tail_days, ads_only=True).values():
+        ad_id = str((_ads_data(rec) or {}).get("ad_id") or "")
+        if not accept(ad_id):
+            continue
+        created = _created(rec)
+        if not created or created.date() >= day:
+            continue
+        times = _own_message_times(rec)
+        today = [t for t in times if t.date() == day]
+        if not today:
+            continue
+        before = [t for t in times if t.date() < day]
+        if not before or (today[0] - before[-1]).days >= 7:
+            n += 1
+    return n
+
+
 def returning_ad_writers(day: dt.date, tail_days: int = 1) -> int:
     """
     Клиенты с меткой рекламы, пришедшие РАНЬШЕ, но писавшие в этот день.

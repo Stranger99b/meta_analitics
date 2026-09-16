@@ -100,6 +100,38 @@ def _insights_all(level: str, fields: str, since: dt.date, until: dt.date) -> li
     return rows
 
 
+STARTED = "onsite_conversion.messaging_conversation_started_7d"
+
+
+def _conversations_split(day: dt.date) -> dict:
+    """
+    Переписки Meta за день с разбивкой «по клику» / «по просмотру», по всем кабинетам.
+
+    Meta засчитывает рекламе и тех, кто объявление только УВИДЕЛ, а написал сам —
+    такие приходят в Salebot без метки объявления. Без разбивки «60 у Meta против
+    28 у нас» выглядит как потеря данных; с разбивкой видно, из чего разница.
+    """
+    out = {"total": 0, "click": 0, "view": 0}
+    for acct, _label in ad_accounts():
+        try:
+            rows = _get_all_pages(f"{BASE_URL}/{acct}/insights", {
+                "fields": "actions",
+                "level": "account",
+                "time_range": json.dumps({"since": day.isoformat(), "until": day.isoformat()}),
+                "action_attribution_windows": json.dumps(["7d_click", "1d_view"]),
+            })
+        except Exception:
+            continue
+        for r in rows:
+            for a in r.get("actions") or []:
+                if a.get("action_type") != STARTED:
+                    continue
+                out["total"] += int(float(a.get("value") or 0))
+                out["click"] += int(float(a.get("7d_click") or 0))
+                out["view"] += int(float(a.get("1d_view") or 0))
+    return out
+
+
 def _campaign_key(row: dict) -> str:
     """Ключ кампании = кабинет + имя кампании из самой Meta.
 
@@ -266,6 +298,21 @@ def collect(day: dt.date) -> dict:
         if l["replies"] >= 2:
             e["engaged"] += 1
 
+    # Сверка с Meta: сколько СТАРЫХ клиентов написали после 7+ дней тишины по метке
+    # объявления из кабинетов, которые крутились В ЭТОТ ДЕНЬ. Не «за неделю»: метка
+    # объявления живёт у клиента месяцами, и остановленный кабинет с расходом где-то
+    # в начале недели тянул бы в подсчёт своих давних клиентов (на 14.09.2026 это
+    # давало 15 вместо 11, хотя Meta по тому кабинету ничего не засчитывала).
+    live_accounts = {r.get("_acct") for r in camps_day if float(r.get("spend") or 0) > 0}
+
+    def _accept(ad_id: str) -> bool:
+        if ad_id in ad_map:
+            return ad_map[ad_id].partition("|")[0] in live_accounts
+        return acct_prefixes.get(ad_id[:9], "") in live_accounts
+
+    conv_split = _conversations_split(day)
+    returning_starters = sl.returning_ad_starters(day, _accept) if conv_split["total"] else 0
+
     clicks_base = base["clicks"]
     spend_week = _sum(camps_week, "spend")
     leads_week = len(sl.load_leads(wk_from, day))
@@ -277,6 +324,8 @@ def collect(day: dt.date) -> dict:
         "clicks": total["clicks"],
         "leads": len(leads_day),
         "returning_ads": returning,
+        "conv_split": conv_split,
+        "returning_starters": returning_starters,
         "week": {
             "from": wk_from.isoformat(), "to": day.isoformat(),
             "spend": spend_week, "leads": leads_week,
@@ -415,8 +464,13 @@ def render(d: dict) -> str:
              + f" · клики {d['clicks']} · CTR {ctr:.2f}%")
     started = d["meta_messaging"].get("onsite_conversion.messaging_conversation_started_7d", 0)
     if started:
-        L.append(f"✅ «Начатые переписки» снова приходят: <b>{started}</b> "
-                 f"(Salebot насчитал {d['leads']}).")
+        cs = d.get("conv_split") or {}
+        L.append(f"✅ Meta <b>{cs.get('total', started)}</b> = {cs.get('click', 0)} по клику "
+                 f"+ {cs.get('view', 0)} по просмотру · Salebot: <b>{d['leads']}</b> новых "
+                 f"+ {d.get('returning_starters', 0)} вернувшихся")
+        L.append("<i>По клику ≈ новые + вернувшиеся (старые клиенты, написавшие после 7+ дней "
+                 "тишины). По просмотру — человек рекламу видел, но не кликал: в Salebot он "
+                 "без метки, то есть в органике.</i>")
     else:
         got = ", ".join(f"{a.split('.')[-1]}={v}" for a, v in sorted(d["meta_messaging"].items())) or "ничего"
         L.append(f"⛔ «Начатые переписки» Meta не отдаёт (с ~23.08). Из переписок пришло: {got}.")
