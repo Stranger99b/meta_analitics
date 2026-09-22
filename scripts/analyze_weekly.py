@@ -144,6 +144,17 @@ def analyze_weekly(data_path=None):
     T1 = _sum_rows(w1c)
     T2 = _sum_rows(w2c)
 
+    # Кабинеты без расхода на неделе не показываем совсем — их нулевые строки
+    # только засоряют отчёт (старый Azerbaijan остановлен 09.09.2026).
+    _live = {r.get("_acct") for r in w1c if float(r.get("spend") or 0) > 0}
+    if _live:
+        w1c = [r for r in w1c if r.get("_acct") in _live]
+        w2c = [r for r in w2c if r.get("_acct") in _live]
+        adsets = [r for r in adsets if r.get("_acct") in _live]
+        ads = [r for r in ads if r.get("_acct") in _live]
+        T1 = _sum_rows(w1c)
+        T2 = _sum_rows(w2c)
+
     w1_camps = _campaign_totals(w1c)
     w2_camps = _campaign_totals(w2c)
 

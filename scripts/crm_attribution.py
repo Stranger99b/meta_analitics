@@ -192,21 +192,35 @@ def build_attribution() -> tuple[str, str]:
     ad_map = {str(r["ad_id"]): f"{r.get('_acct','')}|{r.get('campaign_name') or '—'}"
               for r in (meta.get("w1_ads") or []) if r.get("ad_id")}
 
-    sp1 = spend_by_campaign(meta.get("w1_campaigns") or [])
+    # Кабинеты без расхода на этой неделе в отчёт не попадают совсем.
+    live = {r.get("_acct") for r in (meta.get("w1_campaigns") or [])
+            if float(r.get("spend") or 0) > 0}
+
+    sp1 = spend_by_campaign([r for r in (meta.get("w1_campaigns") or [])
+                             if r.get("_acct") in live])
     idx1 = _campaign_index(meta.get("w1_campaigns") or [])
-    leads1 = sl.load_leads(d1_from, d1_to)
+    def _live_only(rows):
+        """Лиды по меткам кабинетов, которые на этой неделе крутились."""
+        return [l for l in rows
+                if not live or prefixes.get(l["ad_id"][:9], "") in live]
+
+    leads1 = _live_only(sl.load_leads(d1_from, d1_to))
     f1 = leads_by_campaign(leads1, ad_map, prefixes, idx1)
 
     have_prev = bool(w2.get("since"))
     if have_prev:
         d2_from, d2_to = dt.date.fromisoformat(w2["since"]), dt.date.fromisoformat(w2["until"])
-        sp2 = spend_by_campaign(meta.get("w2_campaigns") or [])
-        idx2 = _campaign_index(meta.get("w2_campaigns") or [])
-        f2 = leads_by_campaign(sl.load_leads(d2_from, d2_to), ad_map, prefixes, idx2)
+        sp2 = spend_by_campaign([r for r in (meta.get("w2_campaigns") or [])
+                                 if r.get("_acct") in live])
+        idx2 = _campaign_index([r for r in (meta.get("w2_campaigns") or [])
+                                if r.get("_acct") in live])
+        f2 = leads_by_campaign(_live_only(sl.load_leads(d2_from, d2_to)),
+                               ad_map, prefixes, idx2)
     else:
         sp2, f2 = {}, {}
 
-    status = meta_messaging_status((meta.get("w1_campaigns") or []))
+    status = meta_messaging_status([r for r in (meta.get("w1_campaigns") or [])
+                                    if r.get("_acct") in live])
     _, missing = sl.dump_days_present(d1_from, d1_to)
 
     # Прошлую неделю тоже включаем в перебор — иначе остановленная кампания
@@ -237,7 +251,11 @@ def build_attribution() -> tuple[str, str]:
         fu1 = f1.get(num) or sl._blank_funnel()
         l1 = fu1["leads"]
         if s1 == 0 and l1 == 0:
-            if (f2.get(num) or {}).get("leads", 0) or sp2.get(num, {}).get("spend", 0):
+            # Кабинеты без расхода на этой неделе в список «не крутились» не берём —
+            # они из отчёта исключены целиком.
+            acct = num.partition("|")[0]
+            if (acct in live) and ((f2.get(num) or {}).get("leads", 0)
+                                   or sp2.get(num, {}).get("spend", 0)):
                 stopped.append(num)
             continue
 

@@ -216,11 +216,17 @@ def collect(day: dt.date) -> dict:
     acct_prefixes = account_prefixes()
 
     leads_day = sl.load_leads(day, day)
-    leads_base = sl.load_leads(base_from, base_to)
+    leads_base = sl.load_leads(base_from, base_to)  # фильтр по живым — ниже
     clients_day = sl.count_new_clients(day, day)
     returning = sl.returning_ad_writers(day)
     clients_base = sl.count_new_clients(base_from, base_to)
     _, missing = sl.dump_days_present(day, day)
+
+    # Кабинеты без расхода в отчётный день не показываем вовсе: их нулевые строки
+    # («$0.0 · показы 0 · переписки ⛔») только засоряют отчёт. Старый Azerbaijan
+    # остановлен 09.09.2026 и иначе висел бы в каждом отчёте.
+    live = {r.get("_acct") for r in camps_day if float(r.get("spend") or 0) > 0}
+    camps_day = [r for r in camps_day if r.get("_acct") in live]
 
     total = _agg(camps_day)
     # Норму CPL тоже считаем по диалоговому расходу — иначе «норма» и текущий день
@@ -231,7 +237,7 @@ def collect(day: dt.date) -> dict:
     for acct, label in ad_accounts():
         name = label or acct
         rows = [r for r in camps_day if r.get("_acct") == name]
-        if rows:
+        if rows and name in live:
             per_account[name] = _agg(rows)
 
     campaigns: dict[str, dict] = {}
@@ -250,7 +256,15 @@ def collect(day: dt.date) -> dict:
         e["dialog"] = is_dialog_objective(r.get("objective"))
 
     unmatched = 0
+    stale = 0  # лиды по меткам кабинетов, которые в этот день не крутились
+    counted = []
     for l in leads_day:
+        # Кабинет метки не тратил в этот день → лид пришёл по давнему клику.
+        # В отчёт он не идёт: иначе кабинет, которого в отчёте нет, влиял бы на CPL.
+        if acct_prefixes.get(l["ad_id"][:9], "") not in live and live:
+            stale += 1
+            continue
+        counted.append(l)
         key = resolve_campaign(l["ad_id"], ad_map)
         if key is None:
             # Salebot иногда присылает ad_id варианта плейсмента («…_Group_1»),
@@ -281,6 +295,8 @@ def collect(day: dt.date) -> dict:
         if l["replies"] >= 2:
             e["engaged"] += 1
 
+    leads_day = counted
+
     # Сверка с Meta: сколько СТАРЫХ клиентов написали после 7+ дней тишины по метке
     # объявления из кабинетов, которые крутились В ЭТОТ ДЕНЬ. Не «за неделю»: метка
     # объявления живёт у клиента месяцами, и остановленный кабинет с расходом где-то
@@ -302,7 +318,11 @@ def collect(day: dt.date) -> dict:
     spend_profile = sum(c["spend"] for c in campaigns.values() if not c["dialog"])
     spend_week = _sum([r for r in camps_week if is_dialog_objective(r.get("objective"))],
                       "spend")
-    leads_week = len(sl.load_leads(wk_from, day))
+    def _live_only(rows):
+        return [l for l in rows
+                if not live or acct_prefixes.get(l["ad_id"][:9], "") in live]
+
+    leads_week = len(_live_only(sl.load_leads(wk_from, day)))
 
     return {
         "day": day.isoformat(),
@@ -322,11 +342,12 @@ def collect(day: dt.date) -> dict:
         "spend_profile": spend_profile,
         "per_account": per_account,
         "leads_without_campaign": unmatched,
+        "stale_leads": stale,
         "clients": clients_day,
         "baseline": {
             "from": base_from.isoformat(), "to": base_to.isoformat(),
             "spend_per_day": base["spend"] / 7,
-            "leads_per_day": len(leads_base) / 7,
+            "leads_per_day": len(_live_only(leads_base)) / 7,
             "organic_per_day": clients_base["organic"] / 7,
             "clicks": clicks_base,
             "spend_all_per_day": base_all["spend"] / 7,
@@ -334,7 +355,8 @@ def collect(day: dt.date) -> dict:
             # кликов, дошедших до диалога, ловит поломку связки Instagram→Salebot
             # там, где расход и CTR ещё выглядят нормально. Именно этот показатель
             # вскрыл обвал 22-24.08.2026: 4-6 на 100 кликов → 1.1.
-            "leads_per_100_clicks": (100 * len(leads_base) / clicks_base) if clicks_base else 0,
+            "leads_per_100_clicks": (100 * len(_live_only(leads_base)) / clicks_base)
+                                    if clicks_base else 0,
             "quality_per_1000": base_all["quality_per_1000"],
         },
         "quality_per_1000": total["quality_per_1000"],
@@ -449,6 +471,10 @@ def render(d: dict) -> str:
             L.append(f"• {html.escape(_camp_label(c))} — {_money(c['spend'])} · "
                      f"{c['leads']} лид. · CPL {cpl}"
                      + (f" · 💬{c['engaged']}" if c["engaged"] else ""))
+
+    if d.get("stale_leads"):
+        L.append(f"<i>Ещё {d['stale_leads']} лид. пришли по меткам кабинетов, которые "
+                 f"в этот день не крутились — в расчёт не взяты.</i>")
 
     L.append("\n🔌 <b>Что отдаёт Meta</b>")
     if len(d.get("per_account") or {}) > 1:
