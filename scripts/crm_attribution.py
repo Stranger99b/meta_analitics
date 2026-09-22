@@ -76,7 +76,7 @@ def spend_by_campaign(rows: list[dict]) -> dict[str, dict]:
     разные кампании в одну строку.
     """
     out = defaultdict(lambda: {"spend": 0.0, "impressions": 0, "clicks": 0,
-                               "name": "", "acct": ""})
+                               "name": "", "acct": "", "dialog": True})
     for r in rows:
         name = r.get("campaign_name") or "—"
         acct = r.get("_acct", "")
@@ -86,7 +86,20 @@ def spend_by_campaign(rows: list[dict]) -> dict[str, dict]:
         o["clicks"] += int(r.get("clicks") or 0)
         o["name"] = o["name"] or name
         o["acct"] = o["acct"] or acct
+        o["dialog"] = is_dialog_objective(r.get("objective"))
     return dict(out)
+
+
+# Цели кампаний, которые ВЕДУТ В ДИРЕКТ и потому дают лид с меткой объявления.
+# Всё остальное (трафик в профиль, охват, клики по ссылке) метку в Salebot не
+# создаёт: человек приходит в профиль и пишет оттуда — для нас это органика.
+# Поэтому ноль лидов у такой кампании — не провал, и в CPL её расход не идёт.
+DIALOG_OBJECTIVES = {"OUTCOME_ENGAGEMENT", "MESSAGES", "CONVERSATIONS"}
+
+
+def is_dialog_objective(objective: str | None) -> bool:
+    """Белый список: считаем диалоговой только явно диалоговую цель."""
+    return (objective or "").upper() in DIALOG_OBJECTIVES
 
 
 def resolve_campaign(ad_id: str, ad_map: dict, prefixes: dict | None = None,
@@ -212,6 +225,7 @@ def build_attribution() -> tuple[str, str]:
         L.append("")
 
     tot_s1, tot_l1, tot_c1 = 0.0, 0, 0
+    tot_profile = 0.0  # расход кампаний, ведущих в профиль — считаем отдельно
     # Итоги прошлой недели считаем по ВСЕМ её кампаниям, а не только по тем, что
     # крутятся сейчас: иначе остановленная кампания молча выпадает из сравнения.
     tot_s2 = sum(v["spend"] for v in sp2.values())
@@ -229,13 +243,23 @@ def build_attribution() -> tuple[str, str]:
 
         s2 = sp2.get(num, {}).get("spend", 0.0)
         l2 = (f2.get(num) or {}).get("leads", 0)
-        tot_s1 += s1; tot_l1 += l1; tot_c1 += sl.conversions(fu1)
+        if sp1.get(num, {}).get("dialog", True):
+            tot_s1 += s1
+        else:
+            tot_profile += s1
+        tot_l1 += l1; tot_c1 += sl.conversions(fu1)
 
         name = sp1.get(num, {}).get("name") or num.replace("|", " · ")
         cpl1 = s1 / l1 if l1 else None
         cpl2 = s2 / l2 if l2 else None
 
         L.append(f"<b>{_html.escape(name)}</b>")
+        if not sp1.get(num, {}).get("dialog", True):
+            L.append(f"  💸 {_fmt_money(s1)}  |  ведёт в профиль — лидов с меткой "
+                     f"не бывает, в CPL не входит")
+            L.append("")
+            continue
+
         cpl_str = _fmt_money(cpl1) if cpl1 is not None else "—"
         if cpl1 is not None and cpl2:
             arrow = "🔺" if cpl1 > cpl2 * 1.15 else ("🔻" if cpl1 < cpl2 * 0.85 else "▪️")
@@ -265,6 +289,9 @@ def build_attribution() -> tuple[str, str]:
     tail = f"  |  CPL {_fmt_money(cpl_tot1)}" if cpl_tot1 else ""
     if cpl_tot1 and cpl_tot2:
         tail += f" (было {_fmt_money(cpl_tot2)})"
+    if tot_profile:
+        L.append(f"<i>Трафик в профиль: {_fmt_money(tot_profile)} — вне CPL, "
+                 f"эти визиты приходят без метки и попадают в органику.</i>")
     L.append(f"<b>Итого:</b> {_fmt_money(tot_s1)}  |  лидов {tot_l1}"
              + (f" (было {tot_l2})" if have_prev else "")
              + f"  |  бронь/оплата {tot_c1}{tail}")

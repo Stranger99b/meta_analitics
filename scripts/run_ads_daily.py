@@ -49,7 +49,8 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import salebot_leads as sl
-from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign, resolve_campaign
+from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign, \
+    resolve_campaign, is_dialog_objective
 from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, ad_accounts, account_prefixes, \
     _get_all_pages, CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
 from send_telegram import send_message, redact
@@ -222,7 +223,10 @@ def collect(day: dt.date) -> dict:
     _, missing = sl.dump_days_present(day, day)
 
     total = _agg(camps_day)
-    base = _agg(camps_base)
+    # Норму CPL тоже считаем по диалоговому расходу — иначе «норма» и текущий день
+    # считаются по разным правилам и сравнение врёт.
+    base = _agg([r for r in camps_base if is_dialog_objective(r.get("objective"))])
+    base_all = _agg(camps_base)
     per_account = {}
     for acct, label in ad_accounts():
         name = label or acct
@@ -235,7 +239,7 @@ def collect(day: dt.date) -> dict:
     def _slot(key: str, acct: str, name: str) -> dict:
         return campaigns.setdefault(key, {
             "acct": acct, "name": name, "spend": 0.0, "impressions": 0,
-            "clicks": 0, "leads": 0, "engaged": 0,
+            "clicks": 0, "leads": 0, "engaged": 0, "dialog": True,
         })
 
     for r in camps_day:
@@ -243,6 +247,7 @@ def collect(day: dt.date) -> dict:
         e["spend"] += float(r.get("spend") or 0)
         e["impressions"] += int(r.get("impressions") or 0)
         e["clicks"] += int(r.get("clicks") or 0)
+        e["dialog"] = is_dialog_objective(r.get("objective"))
 
     unmatched = 0
     for l in leads_day:
@@ -292,7 +297,11 @@ def collect(day: dt.date) -> dict:
     returning_starters = sl.returning_ad_starters(day, _accept) if conv_split["total"] else 0
 
     clicks_base = base["clicks"]
-    spend_week = _sum(camps_week, "spend")
+    # Кампании, ведущие в профиль, не дают лид с меткой — их расход держим отдельно,
+    # иначе CPL завышается, а сама кампания выглядит провалом с нулём лидов.
+    spend_profile = sum(c["spend"] for c in campaigns.values() if not c["dialog"])
+    spend_week = _sum([r for r in camps_week if is_dialog_objective(r.get("objective"))],
+                      "spend")
     leads_week = len(sl.load_leads(wk_from, day))
 
     return {
@@ -310,6 +319,7 @@ def collect(day: dt.date) -> dict:
             "cpl": (spend_week / leads_week) if leads_week else None,
         },
         "campaigns": campaigns,
+        "spend_profile": spend_profile,
         "per_account": per_account,
         "leads_without_campaign": unmatched,
         "clients": clients_day,
@@ -319,12 +329,13 @@ def collect(day: dt.date) -> dict:
             "leads_per_day": len(leads_base) / 7,
             "organic_per_day": clients_base["organic"] / 7,
             "clicks": clicks_base,
+            "spend_all_per_day": base_all["spend"] / 7,
             # Клик по «написать в директ» — это уже заявленное намерение. Доля
             # кликов, дошедших до диалога, ловит поломку связки Instagram→Salebot
             # там, где расход и CTR ещё выглядят нормально. Именно этот показатель
             # вскрыл обвал 22-24.08.2026: 4-6 на 100 кликов → 1.1.
             "leads_per_100_clicks": (100 * len(leads_base) / clicks_base) if clicks_base else 0,
-            "quality_per_1000": base["quality_per_1000"],
+            "quality_per_1000": base_all["quality_per_1000"],
         },
         "quality_per_1000": total["quality_per_1000"],
         "meta_messaging": total["messaging"],
@@ -336,7 +347,8 @@ def _alerts(d: dict) -> list[str]:
     out = []
     b = d["baseline"]
 
-    cpl = d["spend"] / d["leads"] if d["leads"] else None
+    dialog_spend = d["spend"] - (d.get("spend_profile") or 0.0)
+    cpl = dialog_spend / d["leads"] if d["leads"] else None
     cpl_base = (b["spend_per_day"] / b["leads_per_day"]) if b["leads_per_day"] else None
 
     if d["spend"] > 0 and d["leads"] == 0:
@@ -370,6 +382,8 @@ def _alerts(d: dict) -> list[str]:
 
     for key, c in sorted(d["campaigns"].items(), key=lambda x: -x[1]["spend"]):
         title = html.escape(_camp_label(c))
+        if not c["dialog"]:
+            continue
         if c["spend"] >= NO_LEAD_SPEND_ALERT and c["leads"] == 0:
             out.append(f"{title}: {_money(c['spend'])} без лидов.")
         if c["spend"] > 0 and c["impressions"] == 0:
@@ -389,12 +403,15 @@ def _alerts(d: dict) -> list[str]:
 def render(d: dict) -> str:
     day = dt.date.fromisoformat(d["day"])
     b = d["baseline"]
-    cpl = d["spend"] / d["leads"] if d["leads"] else None
+    dialog_spend = d["spend"] - (d.get("spend_profile") or 0.0)
+    cpl = dialog_spend / d["leads"] if d["leads"] else None
     cpl_base = (b["spend_per_day"] / b["leads_per_day"]) if b["leads_per_day"] else None
 
     L = [f"📣 <b>Реклама Meta за {day.strftime('%d.%m')} ({_WD[day.weekday()]})</b>", ""]
-    L.append(f"💸 Расход <b>{_money(d['spend'])}</b>  ·  "
-             f"👥 лидов <b>{d['leads']}</b>  ·  "
+    prof = d.get("spend_profile") or 0.0
+    L.append(f"💸 Расход <b>{_money(d['spend'])}</b>"
+             + (f" <i>(из них {_money(prof)} — трафик в профиль)</i>" if prof else "")
+             + f"  ·  👥 лидов <b>{d['leads']}</b>  ·  "
              f"CPL <b>{_money(cpl) if cpl else '—'}</b>")
     L.append(f"<i>норма за 7 дней ({b['from'][8:10]}.{b['from'][5:7]}–{b['to'][8:10]}.{b['to'][5:7]}): "
              f"{_money(b['spend_per_day'])}/день · {b['leads_per_day']:.1f} лид./день · "
@@ -424,6 +441,10 @@ def render(d: dict) -> str:
     if rows:
         L.append("\n<b>По кампаниям</b>")
         for key, c in rows:
+            if not c["dialog"]:
+                L.append(f"• {html.escape(_camp_label(c))} — {_money(c['spend'])} · "
+                         f"<i>ведёт в профиль, лидов с меткой не бывает</i>")
+                continue
             cpl = _money(c["spend"] / c["leads"]) if c["leads"] and c["spend"] else "—"
             L.append(f"• {html.escape(_camp_label(c))} — {_money(c['spend'])} · "
                      f"{c['leads']} лид. · CPL {cpl}"

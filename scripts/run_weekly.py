@@ -67,8 +67,16 @@ def main():
             [claude_bin, "--print", "--dangerously-skip-permissions", "-p", prompt],
             capture_output=True, text=True, timeout=600,
         )
-        ai_text = result.stdout.strip() if result.returncode == 0 and result.stdout.strip() \
-            else f"[AI аудит недоступен: {result.stderr[:200]}]"
+        if result.returncode == 0 and result.stdout.strip():
+            ai_text = result.stdout.strip()
+        else:
+            # Раньше сюда подставлялся только stderr, а он у claude CLI часто пустой —
+            # в отчёт уходило «[AI аудит недоступен: ]» без единой подсказки.
+            # Самая частая причина — истёкшая авторизация claude.ai: тогда CLI пишет
+            # в stdout и выходит с ненулевым кодом. Показываем код и оба потока.
+            why = (result.stderr or "").strip() or (result.stdout or "").strip() or "пустой вывод"
+            ai_text = f"[AI аудит недоступен (код {result.returncode}): {why[:300]}]"
+            print(f"[run_weekly] AI audit failed rc={result.returncode}: {why[:500]}")
 
         followers_block = format_followers_block(ig_snap, period="week")
         if followers_block:
