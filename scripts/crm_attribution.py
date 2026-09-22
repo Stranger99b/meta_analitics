@@ -19,6 +19,7 @@ import json
 import datetime as dt
 import html as _html
 from collections import defaultdict
+from collections import defaultdict
 
 import salebot_leads as sl
 
@@ -67,18 +68,90 @@ def load_meta_weekly() -> dict | None:
 
 
 def spend_by_campaign(rows: list[dict]) -> dict[str, dict]:
-    """{campaign_num: {spend, impressions, clicks, name}} — суммируем по номеру №XXX."""
-    out = defaultdict(lambda: {"spend": 0.0, "impressions": 0, "clicks": 0, "name": ""})
+    """
+    {ключ: {spend, impressions, clicks, name, acct}} по строкам инсайтов.
+
+    Ключ — кабинет + название кампании, а не номер «№XXX»: номера в кабинетах
+    повторяются (в двух новых есть №002), и группировка по номеру склеивала бы
+    разные кампании в одну строку.
+    """
+    out = defaultdict(lambda: {"spend": 0.0, "impressions": 0, "clicks": 0,
+                               "name": "", "acct": ""})
     for r in rows:
-        num = sl.campaign_num(r.get("campaign_name") or "")
-        if not num:
-            continue
-        o = out[num]
+        name = r.get("campaign_name") or "—"
+        acct = r.get("_acct", "")
+        o = out[f"{acct}|{name}"]
         o["spend"] += float(r.get("spend") or 0)
         o["impressions"] += int(r.get("impressions") or 0)
         o["clicks"] += int(r.get("clicks") or 0)
-        if not o["name"]:
-            o["name"] = r.get("campaign_name") or ""
+        o["name"] = o["name"] or name
+        o["acct"] = o["acct"] or acct
+    return dict(out)
+
+
+def resolve_campaign(ad_id: str, ad_map: dict, prefixes: dict | None = None,
+                     index: dict | None = None, min_prefix: int = 10) -> str | None:
+    """
+    Кампания лида по его `ad_id`.
+
+    1) точное совпадение с объявлением из инсайтов;
+    2) иначе — по самому длинному совпадению начала id. Salebot для части лидов
+       присылает id варианта плейсмента («…_Group_1»), которого у Meta нет как
+       объекта, но он рождается рядом с родительским объявлением: у лидов Дагестана
+       совпадало 10 цифр с его объявлениями (1202519140…), тогда как у Мурманска
+       префикс другой (1202520428…). Требуем не меньше `min_prefix` цифр И чтобы
+       все лучшие совпадения вели в ОДНУ кампанию — иначе не гадаем;
+    3) иначе — по кабинету (первые 9 цифр) и номеру «№XXX» из названия объявления.
+
+    Без этого 45 лидов за неделю 14–20.09.2026 висели в строке «без кампании»,
+    а Дагестан при расходе $236 показывал ноль лидов.
+    """
+    key = ad_map.get(ad_id)
+    if key:
+        return key
+    best_len, best_keys = 0, set()
+    for known, k in ad_map.items():
+        n = len(os.path.commonprefix([known, ad_id]))
+        if n > best_len:
+            best_len, best_keys = n, {k}
+        elif n == best_len:
+            best_keys.add(k)
+    if best_len >= min_prefix and len(best_keys) == 1:
+        return next(iter(best_keys))
+    if prefixes is not None and index is not None:
+        return index.get((prefixes.get(ad_id[:9], ""), sl.campaign_num(ad_id)))
+    return None
+
+
+def _campaign_index(rows: list[dict]) -> dict[tuple, str]:
+    """{(кабинет, номер кампании): ключ} — для лидов, привязанных по номеру."""
+    idx = {}
+    for r in rows:
+        name = r.get("campaign_name") or ""
+        num = sl.campaign_num(name)
+        if num:
+            idx[(r.get("_acct", ""), num)] = f"{r.get('_acct','')}|{name}"
+    return idx
+
+
+def leads_by_campaign(leads: list[dict], ad_map: dict, prefixes: dict,
+                      index: dict) -> dict[str, dict]:
+    """
+    Раскладывает лиды Salebot по кампаниям.
+
+    Сначала по `ad_id` (точно), затем — для вариантов плейсмента «…_Group_1»,
+    которых у Meta нет как объектов, — по кабинету (первые 9 цифр id) и номеру
+    «№XXX» из названия объявления.
+    """
+    out = defaultdict(sl._blank_funnel)
+    for l in leads:
+        key = resolve_campaign(l["ad_id"], ad_map)
+        if not key:
+            acct = prefixes.get(l["ad_id"][:9], "")
+            key = index.get((acct, l.get("campaign_num")))
+        if not key:
+            key = f"{prefixes.get(l['ad_id'][:9], '')}|без кампании"
+        sl._fold(out[key], l)
     return dict(out)
 
 
@@ -101,15 +174,22 @@ def build_attribution() -> tuple[str, str]:
         return "", ""
 
     d1_from, d1_to = dt.date.fromisoformat(w1["since"]), dt.date.fromisoformat(w1["until"])
+    from fetch_meta_ads import account_prefixes
+    prefixes = account_prefixes()
+    ad_map = {str(r["ad_id"]): f"{r.get('_acct','')}|{r.get('campaign_name') or '—'}"
+              for r in (meta.get("w1_ads") or []) if r.get("ad_id")}
+
     sp1 = spend_by_campaign(meta.get("w1_campaigns") or [])
+    idx1 = _campaign_index(meta.get("w1_campaigns") or [])
     leads1 = sl.load_leads(d1_from, d1_to)
-    f1 = sl.group_by_campaign(leads1)
+    f1 = leads_by_campaign(leads1, ad_map, prefixes, idx1)
 
     have_prev = bool(w2.get("since"))
     if have_prev:
         d2_from, d2_to = dt.date.fromisoformat(w2["since"]), dt.date.fromisoformat(w2["until"])
         sp2 = spend_by_campaign(meta.get("w2_campaigns") or [])
-        f2 = sl.group_by_campaign(sl.load_leads(d2_from, d2_to))
+        idx2 = _campaign_index(meta.get("w2_campaigns") or [])
+        f2 = leads_by_campaign(sl.load_leads(d2_from, d2_to), ad_map, prefixes, idx2)
     else:
         sp2, f2 = {}, {}
 
@@ -151,12 +231,11 @@ def build_attribution() -> tuple[str, str]:
         l2 = (f2.get(num) or {}).get("leads", 0)
         tot_s1 += s1; tot_l1 += l1; tot_c1 += sl.conversions(fu1)
 
-        title = fu1["title"] or sp1.get(num, {}).get("name", "")
-        name = sl.short_name(title) or f"кампания №{num}"
+        name = sp1.get(num, {}).get("name") or num.replace("|", " · ")
         cpl1 = s1 / l1 if l1 else None
         cpl2 = s2 / l2 if l2 else None
 
-        L.append(f"<b>№{num} — {_html.escape(name)}</b>")
+        L.append(f"<b>{_html.escape(name)}</b>")
         cpl_str = _fmt_money(cpl1) if cpl1 is not None else "—"
         if cpl1 is not None and cpl2:
             arrow = "🔺" if cpl1 > cpl2 * 1.15 else ("🔻" if cpl1 < cpl2 * 0.85 else "▪️")
@@ -191,7 +270,10 @@ def build_attribution() -> tuple[str, str]:
              + f"  |  бронь/оплата {tot_c1}{tail}")
 
     if stopped:
-        L.append(f"⏹ Не крутились на этой неделе: {', '.join('№' + n for n in stopped)} "
+        names = [(sp2.get(k, {}).get("name") or k.replace("|", " · ")) for k in stopped]
+        if len(names) > 3:
+            names = names[:3] + [f"и ещё {len(names) - 3}"]
+        L.append(f"⏹ Не крутились на этой неделе: {', '.join(names)} "
                  f"(на прошлой лиды были).")
 
     tail_day = (d1_to + dt.timedelta(days=1)).isoformat()
@@ -216,7 +298,7 @@ def build_attribution() -> tuple[str, str]:
             continue
         l2 = (f2.get(num) or {}).get("leads", 0)
         cpl = f"${s1 / fu1['leads']:.1f}" if fu1["leads"] else "нет лидов"
-        A.append(f"№{num} {sl.short_name(fu1['title'] or sp1.get(num, {}).get('name', ''))}: "
+        A.append(f"{sp1.get(num, {}).get('name') or num.replace('|', ' · ')}: "
                  f"расход=${s1:.0f}, лидов={fu1['leads']} (пред.нед. {l2}), CPL={cpl}, "
                  f"завязались={fu1['engaged']}, бронь/оплата={sl.conversions(fu1)}, "
                  f"отмен={fu1['cancel']}")

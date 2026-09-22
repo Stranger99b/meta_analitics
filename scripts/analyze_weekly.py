@@ -151,7 +151,9 @@ def analyze_weekly(data_path=None):
     lines = [
         f"📊 *НЕДЕЛЬНЫЙ ОТЧЁТ META ADS*",
         f"🗓 {w1_label}.2026  vs  {w2_label}.2026",
-        f"🏢 {acc}",
+        # Кабинетов может быть несколько (с 09.09.2026 работают «Беларусь» и «Личный»,
+        # старый Azerbaijan остановлен) — показываем те, где на неделе был расход.
+        f"🏢 {', '.join(sorted({r.get('_acct') for r in w1c if float(r.get('spend') or 0) > 0 and r.get('_acct')})) or acc}",
         "",
         "━━━━ ИТОГО ЗА НЕДЕЛЮ ━━━━",
         f"💰 Расход: *{_money(T1['spend'], cur)}*  (пред: {_money(T2['spend'], cur)}  {_delta(T1['spend'], T2['spend'])})",

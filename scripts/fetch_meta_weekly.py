@@ -111,22 +111,48 @@ def _week_range(weeks_ago=1):
 
 
 def _fetch_insights(fields, level, since, until):
-    return _get_all_pages(
-        f"{BASE_URL}/{AD_ACCOUNT_ID}/insights",
-        {
-            "fields": fields,
-            "time_range": json.dumps({"since": since, "until": until}),
-            "level": level,
-            "limit": 200,
-        },
-    )
+    """
+    Инсайты по ВСЕМ кабинетам из META_AD_ACCOUNTS.
+
+    Раньше брался один кабинет из META_AD_ACCOUNT_ID. После перехода на новые
+    кабинеты (старый Azerbaijan остановлен 09.09.2026) недельный отчёт показывал
+    нули: расход и переписки шли в «Беларусь» и «Личный», а отчёт смотрел мимо.
+
+    В каждую строку кладём метку кабинета `_acct`, а к названию кампании её
+    приписываем, когда кабинетов больше одного: номера кампаний в кабинетах
+    повторяются (в двух новых есть №002), и без метки разные кампании сливались бы
+    в одну строку отчёта.
+    """
+    from fetch_meta_ads import ad_accounts
+
+    accounts = ad_accounts()
+    multi = len(accounts) > 1
+    rows = []
+    for acct, label in accounts:
+        name = label or acct
+        for r in _get_all_pages(
+            f"{BASE_URL}/{acct}/insights",
+            {
+                "fields": fields,
+                "time_range": json.dumps({"since": since, "until": until}),
+                "level": level,
+                "limit": 200,
+            },
+        ):
+            r["_acct"] = name
+            if multi and r.get("campaign_name"):
+                r["campaign_name"] = f"{name} · {r['campaign_name']}"
+            rows.append(r)
+    return rows
 
 
 def fetch_and_save():
+    from fetch_meta_ads import ad_accounts
     account = _get(
-        f"{BASE_URL}/{AD_ACCOUNT_ID}",
+        f"{BASE_URL}/{ad_accounts()[0][0]}",
         {"fields": "name,currency,timezone_name"},
     )
+    account["accounts"] = [lab or a for a, lab in ad_accounts()]
 
     w1_since, w1_until = _week_range(1)  # last full week (Mon–Sun)
     w2_since, w2_until = _week_range(2)  # week before that

@@ -126,6 +126,25 @@ def ad_accounts() -> list[tuple[str, str]]:
     return out
 
 
+def account_prefixes() -> dict[str, str]:
+    """
+    {первые 9 цифр ad_id: метка кабинета} — по списку объявлений каждого кабинета.
+
+    Нужно для лидов, у которых Salebot прислал id варианта плейсмента («…_Group_1»):
+    такого объекта у Meta нет, по ad_id он не находится. Первые девять цифр id общие
+    для всех объявлений одного кабинета и между кабинетами не пересекаются.
+    """
+    out: dict[str, str] = {}
+    for acct, label in ad_accounts():
+        try:
+            rows = _get_all_pages(f"{BASE_URL}/{acct}/ads", {"fields": "id", "limit": 200})
+        except Exception:
+            continue
+        for r in rows:
+            out[str(r["id"])[:9]] = label or acct
+    return out
+
+
 def fetch_account_info():
     return _get(f"{BASE_URL}/{AD_ACCOUNT_ID}", {"fields": "name,currency,timezone_name"})
 

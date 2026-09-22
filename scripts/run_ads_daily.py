@@ -49,9 +49,9 @@ load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import salebot_leads as sl
-from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign
-from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, ad_accounts, _get_all_pages, \
-    CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
+from crm_attribution import MESSAGING_ACTIONS, _actions, spend_by_campaign, resolve_campaign
+from fetch_meta_ads import BASE_URL, AD_ACCOUNT_ID, ad_accounts, account_prefixes, \
+    _get_all_pages, CAMPAIGN_INSIGHT_FIELDS, AD_INSIGHT_FIELDS
 from send_telegram import send_message, redact
 from secrets_scrub import scrub
 
@@ -145,28 +145,6 @@ def _campaign_key(row: dict) -> str:
     return f"{row.get('_acct','')}|{row.get('campaign_name') or '—'}"
 
 
-def _account_prefixes() -> dict[str, str]:
-    """
-    {первые 9 цифр ad_id: метка кабинета} — по списку объявлений каждого кабинета.
-
-    Нужно для лидов, у которых Salebot прислал id варианта плейсмента («…_Group_1»):
-    такого объекта у Meta нет, инсайты его не содержат, и по ad_id он не находится.
-    Но первые девять цифр id у всех объявлений одного кабинета общие и между
-    кабинетами не пересекаются, так что кабинет определяется однозначно.
-    Без этого лиды белорусского кабинета за 09-10.09.2026 (5 штук) считались
-    «без кампании», и кабинет выглядел как дающий ноль.
-    """
-    out: dict[str, str] = {}
-    for acct, label in ad_accounts():
-        try:
-            rows = _get_all_pages(f"{BASE_URL}/{acct}/ads", {"fields": "id", "limit": 200})
-        except Exception:
-            continue
-        for r in rows:
-            out[str(r["id"])[:9]] = label or acct
-    return out
-
-
 def _ad_to_campaign(ad_rows: list[dict]) -> dict[str, str]:
     """{ad_id: ключ кампании} — по строкам инсайтов уровня объявления."""
     return {str(r["ad_id"]): _campaign_key(r) for r in ad_rows if r.get("ad_id")}
@@ -234,7 +212,7 @@ def collect(day: dt.date) -> dict:
     # в разных кабинетах повторяются. Карту строим по неделе — она покрывает и
     # объявления, остановленные день-два назад.
     ad_map = _ad_to_campaign(ads_week)
-    acct_prefixes = _account_prefixes()
+    acct_prefixes = account_prefixes()
 
     leads_day = sl.load_leads(day, day)
     leads_base = sl.load_leads(base_from, base_to)
@@ -268,7 +246,7 @@ def collect(day: dt.date) -> dict:
 
     unmatched = 0
     for l in leads_day:
-        key = ad_map.get(l["ad_id"])
+        key = resolve_campaign(l["ad_id"], ad_map)
         if key is None:
             # Salebot иногда присылает ad_id варианта плейсмента («…_Group_1»),
             # которого у Meta нет как объекта: инсайты его не содержат и точного
