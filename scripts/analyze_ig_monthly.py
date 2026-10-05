@@ -30,8 +30,7 @@ def build_digest(data) -> str:
     S.append(rf.line("Подписчики", prof.get("followers_count")))
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        gsign = "+" if fg >= 0 else "−"
-        S.append(f"Прирост за месяц — {gsign}{rf.fmt(abs(fg))}{rf.delta(fg, fgp)}")
+        S.append(f"Прирост за месяц — {rf.growth_text(fg, fgp)}")
     S.append(f"Публикаций (рилс+посты) — {data.get('posts_count', 0)}")
 
     S.append("")

@@ -33,7 +33,7 @@ def build_digest(data) -> str:
         S.append(rf.line("Подписчики", data.get("followers_count")))
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        S.append(f"Прирост за месяц — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
+        S.append(f"Прирост за месяц — {rf.growth_text(fg, fgp)}")
     n, per_week = _cadence(data)
     S.append(f"Постов за месяц — {n}  (~{per_week:.1f}/нед)")
 

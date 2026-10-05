@@ -57,6 +57,26 @@ def delta(cur, prev) -> str:
     return f"  {'▲' if p >= 0 else '▼'}{abs(p):.0f}%"
 
 
+def growth_text(fg, fgp) -> str:
+    """Прирост подписчиков: значение (по знаку) + динамика к прошлому периоду в ЛЮДЯХ.
+
+    Без обманчивого %-прироста-к-приросту: +43 и +42 — почти одинаковый рост, но
+    процент к прошлой неделе давал ▲48% и ▼12% (разные базы). Здесь — честно."""
+    sign = "+" if fg > 0 else ("−" if fg < 0 else "")
+    s = f"{sign}{fmt(abs(fg))}"
+    if fgp is None:
+        return s
+    ps = "+" if fgp > 0 else ("−" if fgp < 0 else "")
+    diff = fg - fgp
+    if diff > 0:
+        d = f", ▲ на {fmt(abs(diff))}"
+    elif diff < 0:
+        d = f", ▼ на {fmt(abs(diff))}"
+    else:
+        d = ", без изменений"
+    return f"{s} (пред. {ps}{fmt(abs(fgp))}{d})"
+
+
 def line(label, cur, prev=None) -> str:
     """Строка метрики: 'Подписи — 12 345  ▲20%'."""
     return f"{label} — {fmt(cur)}{delta(cur, prev) if prev is not None else ''}"

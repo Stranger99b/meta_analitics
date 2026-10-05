@@ -36,7 +36,7 @@ def build_digest(data) -> str:
     S.append(rf.line("Подписчики", prof.get("followers_count")))
     fg, fgp = data.get("follower_growth_week"), data.get("follower_growth_prev")
     if fg is not None:
-        S.append(f"Прирост — +{rf.fmt(fg)}{rf.delta(fg, fgp)}")
+        S.append(f"Прирост — {rf.growth_text(fg, fgp)}")
 
     # Охват
     S.append("")

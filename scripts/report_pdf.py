@@ -95,6 +95,32 @@ def _trend(cur, prev):
     return f' <font color="{col}">{"▲" if p >= 0 else "▼"}{abs(p):.0f}%</font>'
 
 
+def _growth_cell(fg, fgp):
+    """Ячейка прироста подписчиков: значение красится по своему знаку (рост/потеря),
+    сравнение с прошлым периодом — в ЛЮДЯХ, а не в процентах.
+
+    Процент прироста-к-приросту вводит в заблуждение: +43 и +42 (почти одинаковый
+    рост) давали ▲48% и ▼12% только потому, что сравнивались с разными прошлыми
+    неделями (29 и 48). Здесь зелёный = реально прибавили, и отдельно честно
+    показываем динамику к прошлому периоду в людях."""
+    col = "#2e9e00" if fg > 0 else ("#dc2626" if fg < 0 else "#6b7280")
+    sign = "+" if fg > 0 else ("−" if fg < 0 else "")
+    val = f'<b><font color="{col}">{sign}{_f(abs(fg))}</font></b>'
+    if fgp is None:
+        return val
+    ps = "+" if fgp > 0 else ("−" if fgp < 0 else "")
+    tail = f' <font color="#6b7280">(пред. {ps}{_f(abs(fgp))}</font>'
+    diff = fg - fgp
+    if diff != 0:
+        dc = "#2e9e00" if diff > 0 else "#dc2626"
+        arr = "▲" if diff > 0 else "▼"
+        tail += (f'<font color="#6b7280">, </font>'
+                 f'<font color="{dc}">{arr} на {_f(abs(diff))}</font>')
+    else:
+        tail += '<font color="#6b7280">, без изменений</font>'
+    return val + tail + '<font color="#6b7280">)</font>'
+
+
 def _reach_ft_block(data):
     """Строка органического охвата: подписчики / не-подписчики + доля новой аудитории.
 
@@ -264,7 +290,7 @@ def ig_weekly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
     fg, fgp = data.get("follower_growth_week"), data.get("follower_growth_prev")
     if fg is not None:
         arows.append([Paragraph("Прирост за неделю", ST_LBL),
-                      Paragraph(f"<b>+{_f(fg)}</b>{_trend(fg, fgp)}", ST_VAL)])
+                      Paragraph(_growth_cell(fg, fgp), ST_VAL)])
     at = Table(arows, colWidths=[W*0.56, W*0.44])
     at.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -2), 0.4, LINE),
                             ("TOPPADDING", (0, 0), (-1, -1), 3),
@@ -669,9 +695,8 @@ def ig_monthly_pdf(data, ai_text: str = "", sheet_url: str = "", score=None,
               Paragraph(f"<b>{_f(prof.get('followers_count'))}</b>", ST_VAL)]]
     fg, fgp = data.get("follower_growth_month"), data.get("follower_growth_prev")
     if fg is not None:
-        gsign = "+" if fg >= 0 else "−"
         arows.append([Paragraph("Прирост за месяц", ST_LBL),
-                      Paragraph(f"<b>{gsign}{_f(abs(fg))}</b>{_trend(fg, fgp)}", ST_VAL)])
+                      Paragraph(_growth_cell(fg, fgp), ST_VAL)])
     arows.append([Paragraph("Публикаций (рилс+посты)", ST_LBL),
                   Paragraph(f"<b>{data.get('posts_count', 0)}</b>", ST_VAL)])
     D.append(_audience_table(arows, W))
@@ -700,7 +725,7 @@ def _threads_audience(data, growth_key):
     fgp = data.get("follower_growth_prev")
     if fg is not None:
         rows.append([Paragraph("Прирост за период", ST_LBL),
-                     Paragraph(f"<b>+{_f(fg)}</b>{_trend(fg, fgp)}", ST_VAL)])
+                     Paragraph(_growth_cell(fg, fgp), ST_VAL)])
     return rows
 
 
