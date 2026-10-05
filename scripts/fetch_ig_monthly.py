@@ -50,6 +50,39 @@ def _totals_ranged(start, end):
     return agg
 
 
+def _reach_baseline_monthly(y, m, n=3):
+    """Скользящая база роста охвата: среднее reach/views за n прошлых месяцев из
+    архивов (целевой месяц исключён). None, если истории нет."""
+    import glob
+    target = y * 12 + (m - 1)
+    rows = []
+    for f in glob.glob(os.path.join(DATA_DIR, "archive", "ig_monthly_*.json")):
+        tag = os.path.basename(f)[len("ig_monthly_"):-len(".json")]
+        try:
+            yy, mm = map(int, tag.split("-"))
+        except ValueError:
+            continue
+        if yy * 12 + (mm - 1) >= target:
+            continue
+        try:
+            with open(f, encoding="utf-8") as fh:
+                tw = (json.load(fh).get("totals_month") or {})
+        except Exception:  # noqa: BLE001
+            continue
+        if tw.get("reach") or tw.get("views"):
+            rows.append((yy * 12 + (mm - 1), tw))
+    rows = [tw for _, tw in sorted(rows)][-n:]
+    if not rows:
+        return None
+    rv = [tw.get("reach") for tw in rows if tw.get("reach")]
+    vv = [tw.get("views") for tw in rows if tw.get("views")]
+    if not rv and not vv:
+        return None
+    return {"reach": round(sum(rv) / len(rv)) if rv else None,
+            "views": round(sum(vv) / len(vv)) if vv else None,
+            "label": f"среднему за {len(rows)} мес", "periods": len(rows)}
+
+
 def _reach_ft_ranged(start, end):
     """Охват подписчики/не-подписчики за период (органика + AD), сумма по 30-дн окнам."""
     agg = {"follower": 0, "non_follower": 0, "ad_follower": 0, "ad_non_follower": 0,
@@ -178,6 +211,7 @@ def fetch_and_save(target=None):
         "reach_ft": _reach_ft_ranged(m_start, m_end),
         "reach_ft_prev": _reach_ft_ranged(p_start, p_end),
         "ad_placements": fiw._ad_reach_placements(m_start, m_end),
+        "reach_baseline": _reach_baseline_monthly(y, m),
         "follower_growth_month": fg_month,
         "follower_growth_prev": fg_prev,
         "follower_growth_source": fg_month_src,

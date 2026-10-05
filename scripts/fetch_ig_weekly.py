@@ -51,6 +51,45 @@ def _totals(since, until):
             for row in d.get("data", [])}
 
 
+def reach_baseline(today, n=4):
+    """Скользящая база для критерия роста охвата: среднее reach/views за n прошлых
+    НЕДЕЛЬ из архивов (дедуп по ISO-неделе, текущая неделя исключена).
+
+    Нужно, чтобы всплеск одной недели не создавал невыполнимую планку на следующую
+    и удержание высокого охвата не штрафовалось. None, если истории нет."""
+    import glob
+    cur_wk = today.isocalendar()[:2]
+    by_week = {}  # (year, week) -> (date, totals_week)
+    for f in glob.glob(os.path.join(DATA_DIR, "archive", "ig_weekly_*.json")):
+        ds = os.path.basename(f)[len("ig_weekly_"):-len(".json")]
+        try:
+            d0 = datetime.date.fromisoformat(ds)
+        except ValueError:
+            continue
+        wk = d0.isocalendar()[:2]
+        if wk == cur_wk:
+            continue  # текущая неделя — не база
+        try:
+            with open(f, encoding="utf-8") as fh:
+                tw = (json.load(fh).get("totals_week") or {})
+        except Exception:  # noqa: BLE001
+            continue
+        if not (tw.get("reach") or tw.get("views")):
+            continue
+        if wk not in by_week or d0 > by_week[wk][0]:
+            by_week[wk] = (d0, tw)  # на неделю берём самый свежий архив
+    weeks = sorted(by_week.values())[-n:]
+    if not weeks:
+        return None
+    rv = [tw.get("reach") for _, tw in weeks if tw.get("reach")]
+    vv = [tw.get("views") for _, tw in weeks if tw.get("views")]
+    if not rv and not vv:
+        return None
+    return {"reach": round(sum(rv) / len(rv)) if rv else None,
+            "views": round(sum(vv) / len(vv)) if vv else None,
+            "label": f"среднему за {len(weeks)} нед", "periods": len(weeks)}
+
+
 # Органические поверхности (без рекламы AD) — охват SMM считаем только по ним
 ORGANIC_SURFACES = {"POST", "REEL", "CAROUSEL_CONTAINER", "STORY"}
 
@@ -205,6 +244,7 @@ def fetch_and_save():
         "reach_ft": _reach_follow_type(w_start, today),
         "reach_ft_prev": _reach_follow_type(prev_start, w_start),
         "ad_placements": _ad_reach_placements(w_start, today),
+        "reach_baseline": reach_baseline(today),
         "content": _content_since(w_start),
     }
 

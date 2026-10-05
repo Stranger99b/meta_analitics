@@ -118,16 +118,27 @@ def _period(data):
             data.get("follower_growth_month"), data.get("follower_growth_prev"), days)
 
 
-def _reach_item(cur, prev, weight):
-    r, v = _pct(cur.get("reach"), prev.get("reach")), _pct(cur.get("views"), prev.get("views"))
+def _reach_item(cur, prev, weight, ref_label="прошлому периоду", baseline=None):
+    """Рост охвата/просмотров.
+
+    Сравниваем текущий охват+просмотры с БАЗОЙ. База = скользящее среднее за
+    несколько прошлых периодов (baseline), если передано — так всплеск одной недели
+    не создаёт невыполнимую планку на следующую и удержание высокого уровня не
+    штрафуется. Фолбэк — один прошлый период (prev). Среднее изменение по шкале
+    −10%…+10% → 0…1."""
+    use_base = baseline if (baseline and (baseline.get("reach") or baseline.get("views"))) else None
+    base = use_base or prev
+    r = _pct(cur.get("reach"), base.get("reach"))
+    v = _pct(cur.get("views"), base.get("views"))
     parts = [x for x in (r, v) if x is not None]
     if not parts:
         return {"name": "Рост охвата/просмотров", "frac": None, "weight": weight,
-                "note": "нет прошлого периода"}
+                "note": "нет базы для сравнения"}
     g = sum(parts) / len(parts)
+    ref = use_base.get("label") if use_base else ref_label
     note = ((f"охват {r:+.0f}%" if r is not None else "") +
             (f" · просмотры {v:+.0f}%" if v is not None else "") +
-            f" · в среднем {g:+.0f}% к пр. месяцу (макс. балл при ≥ +10%)")
+            f" · в среднем {g:+.0f}% к {ref} (макс. балл при ≥ +10%)")
     return {"name": "Рост охвата/просмотров", "frac": _lin(g, -10, 10),
             "weight": weight, "note": note.strip(" ·")}
 
@@ -225,9 +236,11 @@ def compute_ig(data):
     cur, prev, fg, fgp, days = _period(data)
     content = data.get("content", [])
     stories = data.get("stories", [])
+    ref = "прошлой неделе" if days == 7 else "прошлому месяцу"
     W = WEIGHTS_IG
     items = [
-        _reach_item(cur, prev, W["reach"]),
+        _reach_item(cur, prev, W["reach"], ref_label=ref,
+                    baseline=data.get("reach_baseline")),
         _er_item(cur, prev, W["er"], ("likes", "comments", "saves", "shares")),
         _followers_item(fg, fgp, W["followers"]),
         _stories_item(stories, days, W["stories"]),
@@ -240,9 +253,11 @@ def compute_ig(data):
 def compute_threads(data):
     cur, prev, fg, fgp, days = _period(data)
     posts = data.get("posts", [])
+    ref = "прошлой неделе" if days == 7 else "прошлому месяцу"
     W = WEIGHTS_TH
     items = [
-        _reach_item(cur, prev, W["reach"]),
+        _reach_item(cur, prev, W["reach"], ref_label=ref,
+                    baseline=data.get("reach_baseline")),
         _er_item(cur, prev, W["er"], ("likes", "replies", "reposts", "quotes")),
         _followers_item(fg, fgp, W["followers"]),
         _activity_simple(len(posts), NORM_THREADS, days, W["activity"]),
