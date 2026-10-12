@@ -51,12 +51,20 @@ def _claude(instruction, summary, tag):
         print(f"[{tag}] Claude fallback ошибка: {e}")
         return None
     out = (r.stdout or "").strip()
-    if out:
-        print(f"[{tag}] AI-вывод получен от Claude (fallback)")
-        return out
-    print(f"[{tag}] Claude fallback вернул пусто (код {r.returncode}): "
-          f"{(r.stderr or '').strip()[:120]}")
-    return None
+    # claude --print при недоступности подписки/лимите печатает ТЕКСТ ОШИБКИ в stdout
+    # (напр. «disabled Claude subscription access … Anthropic API key»). Такой текст
+    # нельзя принимать за AI-вывод — иначе он попадёт в отчёт как «Вывод недели».
+    low = out.lower()
+    err_markers = ("subscription access", "anthropic api key", "enable access",
+                   "ask your admin", "credit balance", "usage limit", "rate limit",
+                   "overloaded", "please run /login", "invalid api key",
+                   "disabled claude")
+    if r.returncode != 0 or (out and any(m in low for m in err_markers)) or len(out) < 40:
+        print(f"[{tag}] Claude fallback не дал валидный вывод (код {r.returncode}): "
+              f"{(out or (r.stderr or '')).strip()[:160]}")
+        return None
+    print(f"[{tag}] AI-вывод получен от Claude (fallback)")
+    return out
 
 
 def generate(instruction, summary, *, tag="ai", role="long",
